@@ -261,6 +261,39 @@ export function novelaiMeta(bytes) {
     }
     at += 12 + size;
   }
+  return metaFromTexts(texts);
+}
+
+// NovelAI also hides the same texts in the alpha channel's lowest bits, column by column: "stealth_pngcomp", a 32-bit
+// length in bits, then the texts as gzipped JSON. A program that re-saves the PNG drops its tEXt chunks but keeps these
+// (novelai.net reads them too). Null when they are not there.
+export async function stealthMeta(file) {
+  const MAGIC = 'stealth_pngcomp';
+  const bitmap = await createImageBitmap(file, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+  const { width, height } = bitmap;
+  const context = new OffscreenCanvas(width, height).getContext('2d');
+  context.drawImage(bitmap, 0, 0);
+  const pixels = context.getImageData(0, 0, width, height).data;  // alpha comes back exact
+  let bit = 0;
+  const read = (count) => {
+    if (bit + count * 8 > width * height) return null;
+    const out = new Uint8Array(count);
+    for (let i = 0; i < count * 8; i++, bit++) {
+      const x = Math.floor(bit / height), y = bit % height;
+      out[i >> 3] = (out[i >> 3] << 1) | (pixels[(y * width + x) * 4 + 3] & 1);
+    }
+    return out;
+  };
+  const magic = read(MAGIC.length);
+  if (!magic || new TextDecoder().decode(magic) !== MAGIC) return null;
+  const length = read(4);
+  const body = length && read(new DataView(length.buffer).getUint32(0) >> 3);
+  if (!body) return null;
+  const json = await new Response(new Blob([body]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  return metaFromTexts(JSON.parse(json));
+}
+
+function metaFromTexts(texts) {
   try {
     const meta = JSON.parse(texts.Comment);
     return typeof meta === 'object' && meta ? { ...meta, source: texts.Source || '' } : null;
@@ -272,7 +305,7 @@ export function novelaiMeta(bytes) {
 // A NovelAI picture dropped on the window: its prompts and settings, each prompt with a copy button, and its
 // artists (of the prompt and character prompts; the undesired content names artists to avoid) to register at once.
 export async function promptViewer(app, file) {
-  const meta = novelaiMeta(new Uint8Array(await file.arrayBuffer()));
+  const meta = novelaiMeta(new Uint8Array(await file.arrayBuffer())) || await stealthMeta(file).catch(() => null);
   if (!meta) return toast('NovelAI 프롬프트 정보가 없는 그림입니다. NovelAI에서 받은 PNG 원본을 놓아 주세요 (SNS에 올렸던 그림·캡처는 정보가 지워져 있습니다).', 'warn');
   const caption = meta.v4_prompt?.caption;
   const base = caption?.base_caption ?? meta.prompt ?? '';
