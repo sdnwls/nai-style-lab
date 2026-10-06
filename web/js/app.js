@@ -1,6 +1,6 @@
 // App shell: sidebar, workflow stepper, router, status polling, toasts and keyboard routing.
 import { get, post } from './api.js';
-import { h, clear, morph, icon, toast, run, fmt, setMeta } from './ui.js';
+import { h, clear, morph, icon, toast, run, fmt, setMeta, promptViewer } from './ui.js';
 
 const PAGES = {
   home:      { label: '홈', icon: 'home', load: () => import('./pages/home.js') },
@@ -222,6 +222,21 @@ document.addEventListener('keydown', (event) => {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || event.target.isContentEditable) return;
   if (document.querySelector('.backdrop, .lightbox')) return;
   app.page?.onKey?.(event);
+});
+
+// ---------------------------------------------------------------- dropped pictures
+// A file dropped anywhere on the window: a NovelAI picture opens the prompt viewer (the first PNG, if several).
+// Without this the window would try to open the file itself.
+document.addEventListener('dragover', (event) => {
+  if (event.dataTransfer?.types.includes('Files')) event.preventDefault();
+});
+document.addEventListener('drop', (event) => {
+  if (!event.dataTransfer?.types.includes('Files')) return;
+  event.preventDefault();
+  const file = [...event.dataTransfer.files].find((f) => f.type === 'image/png');
+  if (!file) return toast('NovelAI로 만든 PNG 그림을 놓아 주세요.', 'warn');
+  if (document.querySelector('.backdrop')) return;  // a dialog is open: one thing at a time
+  promptViewer(app, file).catch(() => {});  // a failed request was already shown by run()
 });
 
 // Never fail silently: anything the pages did not catch shows up as a toast.

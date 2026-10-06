@@ -1,6 +1,6 @@
 // 대결 — the one place the user spends most time. Pick the one you like; the app decides what to compare.
 import { get, post } from '../api.js';
-import { h, morph, listen, icon, toast, keysButton, saveSetting, art, tierChip, record, tagList, copyText, openOriginal, lightbox, emptyState, fmt, capped, eloShown } from '../ui.js';
+import { h, morph, listen, icon, toast, keysButton, saveSetting, art, tierChip, record, tagList, copyText, openOriginal, lightbox, emptyState, fmt, capped, eloShown, removeCombos } from '../ui.js';
 
 const KIND = {
   tie:     { icon: 'scale', tone: 'amber' },
@@ -18,6 +18,8 @@ const MODES = [['auto', '자동'], ['league', '전체 리그'], ['top', '상위 
 let root, app, current = null, busy = false, stamp = '', ready = false, reveal = null;
 const REVEAL_MS = 1000;
 const MASK = '???';
+// Evolution (select) and refine (improve) matches keep their combos until that step is done: no delete there.
+const deletable = (kind) => kind !== 'select' && kind !== 'improve';
 
 function header(match) {
   const kind = KIND[match.kind] || KIND.league;
@@ -26,7 +28,7 @@ function header(match) {
     h('div', { class: 'row' }, h('div', { class: 'context', style: { flex: 1 } }, h('div', { class: `icon-badge ${kind.tone}` }, icon(kind.icon)),
       h('div', { style: { minWidth: 0 } }, h('div', { class: 'title' }, match.kind ? ctx.title : '대결'),
         h('div', { class: 'detail' }, match.kind ? ctx.detail : '마음에 드는 쪽을 고르기만 하면 됩니다.'))),
-      keysButton([[['←', '→'], '선택'], [['Enter'], '비슷함'], [['⌫'], '되돌리기'], [[], '휠 확대(양쪽 함께) · 드래그 이동']])),
+      keysButton([[['←', '→'], '선택'], [['4', '6'], '선택 (숫자 패드)'], [['Enter'], '비슷함'], [['⌫'], '되돌리기'], [[], '휠 확대(양쪽 함께) · 드래그 이동']])),
     // The controls get their own line under the title and its description.
     h('div', { class: 'arena-controls' }, h('button', { class: `btn icon-btn ${blind() ? 'primary' : ''}`, 'aria-label': '블라인드', 'aria-pressed': String(blind()), onclick: toggleBlind },
       icon(blind() ? 'eyeOff' : 'eye')),  // icon only: on = filled and the eye crossed out
@@ -88,12 +90,13 @@ function fighter(combo, side, rival, kind) {
           : h('div', {}, h('div', { class: 'elo num' }, eloText(combo, after)),
             // A combo being evaluated has no record worth showing yet (a newcomer's comes when it is placed).
             h('div', { class: 'meta' }, `${evaluating(combo) && !settled(combo, after) ? '새 조합' : record(after || combo)} · ${capped(combo.generation)}세대`)),
-      // Named like the preview's buttons (ui.js comboPreview), stacked so they fit beside the record even on a
-      // narrow card: the original on top.
+      // Named like the preview's buttons (ui.js comboPreview), side by side so the rating line stays one button tall.
       h('div', { class: 'fighter-actions' },
         h('button', { class: 'btn ghost sm labeled', onclick: () => openOriginal(combo) }, icon('external'), '원본'),
-        h('button', { class: 'btn ghost sm labeled', onclick: () => copyText(combo.style) }, icon('copy'), '복사'))),
-    tags,
+        deletable(kind) ? h('button', { class: 'btn ghost sm labeled danger-text', onclick: () => remove([combo.id]) }, icon('trash'), '삭제') : null)),
+    // 복사 copies what this line shows: at its right end, the tags scroll in the room left of it.
+    h('div', { class: 'fighter-tags' }, tags,
+      h('button', { class: 'btn ghost sm labeled', onclick: () => copyText(combo.style) }, icon('copy'), '복사')),
     h('button', { class: 'btn primary pick', disabled: !ready, onclick: () => vote(side) }, '이쪽이 더 좋습니다', h('kbd', {}, key)));
   // One line that scrolls sideways; the mouse wheel scrolls it too.
   listen(tags, 'wheel', (event) => {
@@ -124,7 +127,8 @@ function render(match) {
   morph(root, header(match),
     h('div', { class: 'duel', key: stamp }, fighter(match.a, 'a', match.b, match.kind),
       h('div', { class: 'versus' }, h('div', { class: 'vs-orb' }, 'VS'),
-        h('button', { class: `btn pick-similar ${reveal?.side === 'even' ? 'on' : ''}`, disabled: !ready, onclick: skip }, icon('equal'), '비슷함')),
+        h('button', { class: `btn pick-similar ${reveal?.side === 'even' ? 'on' : ''}`, disabled: !ready, onclick: skip }, icon('equal'), '비슷함'),
+        deletable(match.kind) ? h('button', { class: 'btn ghost sm danger-text', onclick: () => remove([match.a.id, match.b.id]) }, icon('trash'), '둘 다 삭제') : null),
       fighter(match.b, 'b', match.a, match.kind)));
   const duel = root.querySelector('.duel');
   if (duel.__started) return;
@@ -181,6 +185,16 @@ async function act(path, body, side) {
 const vote = (side) => current?.kind && ready && act('/api/vote', { side }, side);
 const skip = () => current?.kind && ready && act('/api/skip', undefined, 'even');
 const undo = () => act('/api/undo');
+// Deleting takes the pair off the screen: the next match comes (a refusal, e.g. while generating, is shown as a toast).
+async function remove(ids) {
+  if (busy) return;
+  busy = true;
+  try {
+    if (await removeCombos(app, ids).catch(() => true)) await load();
+  } finally {
+    busy = false;
+  }
+}
 const blind = () => Boolean(app.settings.arena_blind);
 async function toggleBlind() {
   const settings = app.settings;
@@ -261,8 +275,10 @@ export default {
     }
   },
   onKey(event) {
-    const map = { ArrowLeft: () => vote('a'), ArrowRight: () => vote('b'), Enter: skip, Backspace: undo };
-    const fn = map[event.key];
+    // Numpad 4/6 by code: with Num Lock on their key is '4'/'6' (off, it is already ArrowLeft/ArrowRight).
+    const map = { ArrowLeft: () => vote('a'), ArrowRight: () => vote('b'), Numpad4: () => vote('a'), Numpad6: () => vote('b'),
+      Enter: skip, Backspace: undo };
+    const fn = map[event.key] || map[event.code];
     if (fn) {
       event.preventDefault();
       if (!event.repeat) fn();  // a held key must not keep voting on matches not yet looked at

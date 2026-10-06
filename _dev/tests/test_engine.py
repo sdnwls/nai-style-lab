@@ -373,9 +373,19 @@ def guards():
         core.http.client.HTTPSConnection = FakeConnection
         try:
             core.generate_style_image('k', '{artist}, 1girl, solo', [], '', '', 'm', 64, 64, 1, 5.0, 's', 1, 0.0)
+            assert sent['parameters']['v4_prompt']['caption']['base_caption'] == '1girl, solo'
+            # As novelai.net sends it, so an imported image comes out the same there: no Variety+, the base prompt
+            # alone in input (the site imports it as the base prompt), and every character once in its own slot.
+            core.generate_style_image('k', '{artist}, 2girls', ['ahri', 'ahri', 'sona'], 'artist:a', '', 'm', 64, 64,
+                                      1, 5.0, 's', 1, 0.0)
         finally:
             core.http.client.HTTPSConnection = real
-        assert sent['parameters']['v4_prompt']['caption']['base_caption'] == '1girl, solo'
+        p = sent['parameters']
+        assert sent['input'] == p['v4_prompt']['caption']['base_caption'] == 'artist:a, 2girls'
+        assert 'skip_cfg_above_sigma' not in p
+        assert [c['char_caption'] for c in p['v4_prompt']['caption']['char_captions']] == ['ahri', 'ahri', 'sona']
+        assert [c['prompt'] for c in p['characterPrompts']] == ['ahri', 'ahri', 'sona']
+        assert len(p['v4_negative_prompt']['caption']['char_captions']) == 3
 
         engine.start_random(14)
         wait_job(engine)

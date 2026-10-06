@@ -226,6 +226,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .btn.ghost:hover { background: var(--surface-2); color: var(--text); }
 .btn.danger { color: var(--red); border-color: rgba(255, 107, 115, 0.25); background: var(--red-soft); }
 .btn.danger:hover { background: rgba(255, 107, 115, 0.2); }
+.btn.danger-text, .versus .btn.danger-text { color: var(--red); }  /* a quiet (ghost) button that deletes */
 .btn.lg { height: 44px; padding: 0 20px; font-size: 14px; border-radius: 12px; }
 .btn.sm { height: 30px; padding: 0 10px; font-size: 12.5px; border-radius: 8px; }
 .btn.pill { border-radius: 999px; }
@@ -363,7 +364,7 @@ input::-ms-reveal, input::-ms-clear { display: none; }
 .fighter .art.zoomed:active { cursor: grabbing; }
 .fighter .art img { transform-origin: 0 0; will-change: transform; }
 .fighter-info { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 0 4px; }
-.fighter-info .fighter-actions { margin-left: auto; display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
+.fighter-info .fighter-actions { margin-left: auto; display: flex; gap: 2px; }
 .fighter-info .fighter-actions .btn { justify-content: flex-start; }
 .fighter-info .elo { font-size: 20px; font-weight: 700; letter-spacing: -0.03em; }
 .fighter-info .meta { font-size: 12.5px; color: var(--text-2); white-space: nowrap; }  /* one line: the buttons give way instead */
@@ -378,9 +379,10 @@ input::-ms-reveal, input::-ms-clear { display: none; }
 .tags.open { max-height: none; }
 /* Arena: the tags on one line that scrolls sideways, so the pictures keep the same size on both sides. */
 /* Fixed height with room for the scrollbar: a side with a scrollbar is exactly as tall as one without. */
-.fighter > .tags { flex: none; flex-wrap: nowrap; align-items: flex-start; height: 36px; max-height: none; overflow-x: auto; overflow-y: hidden;
+.fighter-tags { flex: none; display: flex; align-items: flex-start; gap: 8px; }
+.fighter-tags > .tags { flex: 1; min-width: 0; flex-wrap: nowrap; align-items: flex-start; height: 36px; max-height: none; overflow-x: auto; overflow-y: hidden;
   scrollbar-width: thin; scrollbar-color: var(--surface-4) transparent; }
-.fighter > .tags .tag { flex: none; }
+.fighter-tags > .tags .tag { flex: none; }
 .tag {
   display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px 0 3px; border-radius: 7px;
   background: var(--surface-2); border: 1px solid var(--line); font-size: 12px; color: var(--text-2); white-space: nowrap;
@@ -510,7 +512,7 @@ table.data th.num, table.data td.num { text-align: right; }
 table.data th .dir { color: var(--accent-2); margin-left: 4px; }
 table.data td { padding: 9px 14px; border-bottom: 1px solid var(--line); }
 /* Artists: the name takes what the numbers leave and ends in "…", so the table never scrolls sideways. */
-table.data.artists td:first-child { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.data.artists td:nth-child(2) { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 table.data.artists td.num { white-space: nowrap; }
 table.data tr:last-child td { border-bottom: 0; }
 table.data tbody tr { cursor: pointer; transition: background 0.1s; }
@@ -657,6 +659,18 @@ table.data tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--ac
 .dialog h3 { margin: 0 0 6px; font-size: 17px; letter-spacing: -0.02em; }
 .dialog p { margin: 0 0 16px; color: var(--text-2); white-space: pre-line; }
 .dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+/* Prompt viewer (a NovelAI picture dropped on the window): the picture beside its prompts, which scroll. */
+/* As wide as the picture and the prompts need: no empty band beside a tall picture. */
+.dialog.viewer { width: fit-content; max-width: calc(100vw - 48px); max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+.viewer-body { display: grid; grid-template-columns: auto minmax(0, 560px); gap: 18px; min-height: 0; flex: 1; }
+/* As big as the window lets it be: its whole height in view, no scrolling to see the picture. */
+.viewer-body > img { max-height: calc(100vh - 200px); align-self: start; border-radius: 12px; }
+.viewer-info { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow-y: auto; padding-right: 4px; }
+.viewer-section h4 { margin: 0; font-size: 13px; }
+.viewer-section .row { margin-bottom: 6px; }
+.viewer-section > h4 { margin-bottom: 8px; }
+.viewer-text { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; max-height: 150px; overflow-y: auto; }
 @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
 .lightbox { position: fixed; inset: 0; z-index: 180; background: rgba(5, 6, 10, 0.92); display: grid; place-items: center; animation: fade 0.2s; cursor: zoom-out; }
 /* As big as the window allows (small images are scaled up too), aspect kept. */

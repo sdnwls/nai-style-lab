@@ -24,7 +24,15 @@ MODELS = ['nai-diffusion-5-full', 'nai-diffusion-5-curated', 'nai-diffusion-4-5-
 
 SIZE_PRESETS = {'세로 832x1216': (832, 1216), '정방형 1024x1024': (1024, 1024), '가로 1216x832': (1216, 832)}
 
-DEFAULT_ADVANCED_PARAMS = {'noise_schedule': 'karras', 'ucPreset': 0, 'qualityToggle': True, 'dynamic_thresholding': False, 'dynamic_thresholding_percentile': 0.999, 'dynamic_thresholding_mimic_scale': 10, 'legacy': False, 'legacy_v3_extend': False, 'sm': False, 'sm_dyn': False, 'skip_cfg_above_sigma': 58, 'skip_cfg_below_sigma': 0, 'deliberate_euler_ancestral_bug': False, 'prefer_brownian': True, 'cfg_sched_eligibility': 'enable_for_post_summer_samplers', 'explike_fine_detail': False, 'minimize_sigma_inf': False, 'uncond_per_vibe': True, 'wonky_vibe_correlation': True}
+# What novelai.net itself sends (captured from the site, V5, no quality tags / UC preset, no Variety+), so an image
+# imported there and generated again comes out the same. Variety+ (skip_cfg_above_sigma) alone changes the picture
+# completely, and the site does not carry it over on import. Left out: how the site takes the reply (image_format
+# webp, stream msgpack) and use_new_shared_trial (account billing), none of which changes the picture.
+WEB_PARAMS = {'ucPresetId': 'none', 'qualityPresetId': 'none', 'autoSmea': False, 'dynamic_thresholding': False,
+              'controlnet_strength': 1, 'legacy': False, 'add_original_image': True, 'legacy_v3_extend': False,
+              'use_coords': False, 'normalize_reference_strength_multiple': True, 'inpaintImg2ImgStrength': 1,
+              'straight_alpha': True, 'tag_hint_qt': 0, 'tag_hint_uc_preset': 0, 'deliberate_euler_ancestral_bug': False,
+              'prefer_brownian': True, 'noise_schedule': 'karras'}
 
 DEFAULT_NEGATIVE = 'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, blurry, artistic error, bad proportions, logo, artist logo, comic, manga panel, panel, speech bubble, cover art, magazine cover, collage, text focus, english text, japanese text, multiple views'
 
@@ -180,27 +188,23 @@ def generate_style_image(api_key: str, base_prompt: str, character_prompt: list[
         base_caption = ', '.join(p.strip() for p in base.replace('{artist}', '').split(',') if p.strip())
     if not base_caption:
         raise ValueError('프롬프트가 비어 있습니다.')
-    char_captions = []
+    # Every character, each once, in its own slot (as the site sends them: positions left to the AI).
     char_list = character_prompt_parts(character_prompt)
-    for char_item in char_list:
-        char_captions.append({'char_caption': char_item, 'centers': [{'x': 0.5, 'y': 0.5}]})
+    center = {'x': 0.5, 'y': 0.5}
     parameters = {
-        'params_version': 3, 'width': width, 'height': height,
-        'scale': cfg, 'steps': steps, 'seed': seed,
-        'n_samples': 1, 'add_original_image': False,
-        'characterPrompts': [], 'sampler': sampler,
-        'v4_prompt': {
-            'caption': {'base_caption': base_caption, 'char_captions': char_captions},
-            'use_coords': False, 'use_order': True,
-        },
-        'v4_negative_prompt': {'caption': {'base_caption': negative_prompt, 'char_captions': []}},
+        'params_version': 4, 'width': width, 'height': height, 'scale': cfg, 'sampler': sampler, 'steps': steps,
+        'seed': seed, 'n_samples': 1, 'cfg_rescale': cfg_rescale, **WEB_PARAMS,
+        'v4_prompt': {'caption': {'base_caption': base_caption,
+                                  'char_captions': [{'char_caption': c, 'centers': [center]} for c in char_list]},
+                      'use_coords': False, 'use_order': True},
+        'v4_negative_prompt': {'caption': {'base_caption': negative_prompt,
+                                           'char_captions': [{'char_caption': '', 'centers': [center]} for _ in char_list]}},
         'negative_prompt': negative_prompt,
+        'characterPrompts': [{'prompt': c, 'uc': '', 'center': center, 'enabled': True} for c in char_list],
     }
-    parameters.update(DEFAULT_ADVANCED_PARAMS)
-    parameters['cfg_rescale'] = cfg_rescale
-    full_input_char = ', '.join(char_list)
-    full_input = ', '.join(p for p in [base_caption, full_input_char] if p)
-    payload = {'input': full_input, 'model': model, 'action': 'generate', 'parameters': parameters}
+    # input is the base prompt alone: the site imports it (the PNG's "prompt") as its base prompt, so with the
+    # characters in it too they would come back twice, once there and once in their own slots.
+    payload = {'input': base_caption, 'model': model, 'action': 'generate', 'parameters': parameters}
     body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
     ctx = ssl.create_default_context()
     conn = http.client.HTTPSConnection(NAI_GEN_HOST, context=ctx, timeout=120)
@@ -254,6 +258,34 @@ def _looks_like_number(token: str) -> bool:
         return True
     except ValueError:
         return False
+
+# A NovelAI weight group, "1.2::tags::" (unclosed, it runs to the end); a negative one pushes its tags away.
+WEIGHT_GROUP_RE = re.compile(r'(-?(?:\d+\.?\d*|\.\d+))::(.*?)(?:::|$)', re.S)
+PROMPT_ARTIST_RE = re.compile(r'artist:[^:,{}\[\]|\n]+')
+
+
+def artist_weights_in_prompt(text: str) -> list:
+    """(weight, tag) for the artist: tags of a whole prompt and nothing else (no 1girl, no quality tags); the
+    weight is its "w::...::" group's, 1 outside one. One in a negative group is left out: it is there to push that
+    style away."""
+    # ponytail: {} / [] emphasis (x1.05 per level) is not counted, the weight shows as its group's
+    found, at = [], 0
+
+    def take(chunk, weight):
+        found.extend((weight, t.strip()) for t in PROMPT_ARTIST_RE.findall(chunk) if t.strip() != 'artist:')
+
+    for group in WEIGHT_GROUP_RE.finditer(text):
+        take(text[at:group.start()], 1.0)
+        if float(group.group(1)) > 0:
+            take(group.group(2), float(group.group(1)))
+        at = group.end()
+    take(text[at:], 1.0)
+    return found
+
+
+def artists_in_prompt(text: str) -> list:
+    return [tag for _, tag in artist_weights_in_prompt(text)]
+
 
 def extract_artist_names(raw: str) -> list:
     names = []

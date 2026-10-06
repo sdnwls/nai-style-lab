@@ -59,7 +59,14 @@ def main():
         before = rev()
         ok(app, 'POST', '/api/settings', {'changes': {'steps': 20}})
         assert rev() != before, 'a settings change is visible in the status, so every page refetches them'
-        assert ok(app, 'POST', '/api/artists/add', {'text': 'artist:a, b\n1.2::artist:c::'})['added'] == 3
+        assert ok(app, 'POST', '/api/artists/add', {'text': 'a, b\n1.2::c::'})['added'] == 3, 'bare names: each one'
+        # A whole prompt: its artist: tags only, not one pushed away by a negative weight, nor 1girl and the like.
+        prompt = '1girl, 1.2::artist:d, artist:e::, {artist:f}, -1::artist:g::, masterpiece, artist:a'
+        assert ok(app, 'POST', '/api/artists/scan', {'text': prompt}) == {
+            'pairs': [{'w': 1.2, 'tag': 'artist:d'}, {'w': 1.2, 'tag': 'artist:e'}, {'w': 1.0, 'tag': 'artist:f'},
+                      {'w': 1.0, 'tag': 'artist:a'}],
+            'new': ['artist:d', 'artist:e', 'artist:f']}
+        assert ok(app, 'POST', '/api/artists/add', {'text': prompt})['added'] == 3
         assert '알 수 없는' in error(app, 'GET', '/api/nope')
         assert '알 수 없는' in error(app, 'POST', '/api/nope', {})
         assert '알 수 없는' in error(app, 'DELETE', '/api/status')

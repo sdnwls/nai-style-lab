@@ -18,4 +18,7 @@ uv pip install -r _dev\requirements.txt --target "%PY%\Lib\site-packages" --pyth
     --python-platform x86_64-pc-windows-msvc || exit /b 1
 rem The embedded Python only searches the paths listed in its ._pth file.
 >> "%PY%\python314._pth" echo Lib\site-packages
+rem Unzipped with Windows' own extractor, every file keeps the zip's "from the internet" mark, and .NET then refuses
+rem the window's DLLs (pythonnet, WebView2): the app would close at once. This lets .NET load them anyway.
+for %%e in (python pythonw) do > "%PY%\%%e.exe.config" echo ^<configuration^>^<runtime^>^<loadFromRemoteSources enabled="true"/^>^</runtime^>^</configuration^>
 echo Python %PYVER% ready in %PY%\

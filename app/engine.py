@@ -489,7 +489,10 @@ class Engine:
         with self.lock:
             existing = {a['tag'] for a in self.state['artists']}
             added = 0
-            for name in core.extract_artist_names(text):
+            # With any artist: tag it is a prompt (pasted, or from a dropped picture): those tags only. Without, a
+            # list of bare names: every comma/line-separated entry.
+            names = core.artists_in_prompt(text) if 'artist:' in text else core.extract_artist_names(text)
+            for name in names:
                 tag = core.sanitize_tag(name)
                 if tag and tag not in existing:
                     self.state['artists'].append({'tag': tag, 'count': 0, 'arena_matches': 0,
@@ -499,6 +502,18 @@ class Engine:
             self._artists_checked()
             self.save()
             return added
+
+    def scan_artists(self, text):
+        """The artists a prompt names with their weights, as the combos' pairs (tags as add_artists would
+        register them, each once), and which are not registered yet."""
+        weights = {}
+        for w, raw in core.artist_weights_in_prompt(text):
+            tag = core.sanitize_tag(raw)
+            if tag:
+                weights.setdefault(tag, w)
+        with self.lock:
+            existing = {a['tag'] for a in self.state['artists']}
+        return {'pairs': [{'w': w, 'tag': t} for t, w in weights.items()], 'new': [t for t in weights if t not in existing]}
 
     def rename_artist(self, old, new):
         with self.lock:

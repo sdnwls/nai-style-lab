@@ -28,9 +28,9 @@ function artistTable() {
   };
   return h('div', { class: 'table-wrap', style: { maxHeight: '100%' } },
     h('table', { class: 'data artists' },
-      h('thead', {}, h('tr', {}, head('tag', '작가'), head('score', '점수', true), head('count', '사용', true), head('winrate', '승률', true))),
+      h('thead', {}, h('tr', {}, head('order', '#', true), head('tag', '작가'), head('score', '점수', true), head('count', '사용', true), head('winrate', '승률', true))),
       h('tbody', {}, list.map((a) => h('tr', { key: a.tag, class: view.selected.has(a.tag) ? 'selected' : '', onclick: (e) => pick(a, e) },
-        h('td', {}, shortTag(a.tag)), h('td', { class: 'num' },
+        h('td', { class: 'num' }, fmt(a.order)), h('td', {}, shortTag(a.tag)), h('td', { class: 'num' },
           a.combos ? `${a.score > 0 ? '+' : ''}${fmt(a.score)}` : '–'), h('td', { class: 'num' }, fmt(a.count)),
         h('td', { class: 'num' }, a.arena_matches ? `${Math.round(a.winrate * 100)}%` : '–'))))));
 }
@@ -47,7 +47,7 @@ function tableBar() {
 function render() {
   const settings = app.settings;
   const input = h('textarea', { class: 'textarea', rows: 4, value: view.addText, oninput: (e) => { view.addText = e.currentTarget.value; },
-    placeholder: '예) artist:shigure ui, 1.2::artist:rurudo ::, mika pikazo\n쉼표·줄바꿈으로 여러 명을 한 번에. NAI 조합 문자열을 통째로 붙여 넣어도 작가만 뽑아 냅니다.' });
+    placeholder: '예) artist:shigure ui, 1.2::artist:rurudo ::\n프롬프트를 통째로 붙여 넣어도 artist: 태그만 등록합니다.\nartist: 없이 이름만 쓰면 쉼표·줄바꿈으로 나눈 이름을 모두 등록합니다.' });
   const search = h('input', { class: 'input', type: 'search', placeholder: '작가 검색', value: view.q, oninput: (e) => { view.q = e.currentTarget.value; render(); } });
   const count = h('input', { class: 'input', type: 'number', ...limits('gen_count'), value: view.countDraft ?? settings.gen_count, style: { width: '96px' },
     oninput: (e) => { view.countDraft = e.currentTarget.value; } });
@@ -106,7 +106,8 @@ async function saveRule(key, value) {
 
 async function load() {
   try {
-    artists = await get('/api/artists');
+    // The engine keeps artists in the order they were added: that place is the 등록 순 (# column).
+    artists = (await get('/api/artists')).map((a, i) => ({ ...a, order: i + 1 }));
     render();
   } catch (error) {
     toast(error.message, 'error');

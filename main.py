@@ -14,6 +14,7 @@ import time
 import traceback
 import urllib.parse
 import uuid
+import zlib
 from multiprocessing.connection import Client, Listener
 from pathlib import Path
 
@@ -33,7 +34,9 @@ LEGACY_LOCK = '.server.json'  # next to LOCK_FILE, from the versions that ran a 
 # from disk inside the window (serve_files), so nothing goes over any network.
 ORIGIN = 'https://nai-style-lab.invalid'
 ICON = ROOT / 'web' / 'icon.ico'
-APP_ID = 'NAIStyleLab.App'
+# Per folder: Windows keeps a shortcut per ID with the paths of its first launch, so a moved or renamed folder
+# would get a blank taskbar icon (the old icon path) under a fixed ID.
+APP_ID = f'NAIStyleLab.App.{zlib.crc32(str(ROOT).lower().encode()):08x}'
 
 
 def code_version():
@@ -42,8 +45,8 @@ def code_version():
     return str(max(f.stat().st_mtime_ns for f in files if f.is_file()))
 
 
-def tell(text):
-    ctypes.windll.user32.MessageBoxW(None, text, 'NAI Style Lab', 0x40 | 0x10000)  # MB_ICONINFORMATION | MB_SETFOREGROUND
+def tell(text, icon=0x40):  # MB_ICONINFORMATION; 0x10 is MB_ICONERROR
+    ctypes.windll.user32.MessageBoxW(None, text, 'NAI Style Lab', icon | 0x10000)  # MB_SETFOREGROUND
 
 
 def _is_app_process(pid):
@@ -343,5 +346,22 @@ def main():
             LOCK_FILE.unlink(missing_ok=True)
 
 
+def launch():
+    """main(), but a launch that fails says why: pythonw.exe has no console, so it would just vanish. The message
+    box takes Ctrl+C, and the whole traceback goes to data\\app.log for a bug report."""
+    try:
+        main()
+    except Exception:
+        details = traceback.format_exc()
+        try:
+            DATA_DIR.mkdir(exist_ok=True)
+            with open(DATA_DIR / 'app.log', 'a', encoding='utf-8') as fh:
+                fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] launch failed\n{details}\n")
+            where = '자세한 내용은 data\\app.log에 저장했습니다.\n문의하실 때 이 창을 캡처하거나(Ctrl+C로 복사) app.log 파일을 보내 주세요.'
+        except OSError:  # a folder it cannot write to (Program Files, say): the message is all there is
+            where = '문의하실 때 이 창을 캡처하거나 Ctrl+C로 복사해 보내 주세요.'
+        tell(f'NAI Style Lab을 시작하지 못했습니다.\n\n{details.strip().splitlines()[-1]}\n\n{where}', icon=0x10)
+
+
 if __name__ == '__main__':
-    main()
+    launch()

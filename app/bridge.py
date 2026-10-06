@@ -120,6 +120,7 @@ class App:
             '/api/settings/draft': lambda: self.keep_draft(body.get('seq'), body.get('changes')),
             '/api/subscription': e.check_subscription,
             '/api/artists/add': lambda: {'added': e.add_artists(body.get('text', ''))},
+            '/api/artists/scan': lambda: e.scan_artists(body.get('text', '')),
             '/api/artists/rename': lambda: e.rename_artist(body.get('old'), body.get('new')),
             '/api/artists/delete': lambda: e.delete_artists(body.get('tags', [])),
             '/api/generate/random': lambda: e.start_random(body.get('count')),

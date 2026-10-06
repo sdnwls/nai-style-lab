@@ -127,5 +127,30 @@ def main_test():
           'older version still open.')
 
 
+def failed_launch_test():
+    """A launch that fails says why in a message box and logs the traceback, instead of vanishing (pythonw)."""
+    told = []
+
+    def broken_window(app):
+        raise RuntimeError('Failed to resolve Python.Runtime.Loader.Initialize')
+
+    main.tell = lambda text, icon=0x40: told.append((text, icon))
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, _, closed = start(Path(tmp))  # sets up the stand-ins; that window is closed again
+        closed.set()
+        runner.join(timeout=5)
+        main.open_window = broken_window
+        main.launch()
+        text, icon = told[-1]
+        assert icon == 0x10 and 'RuntimeError: Failed to resolve' in text and 'app.log' in text, told
+        assert 'Traceback' in (Path(tmp) / 'app.log').read_text(encoding='utf-8')
+        assert not main.LOCK_FILE.exists()
+    # Downloaded zips mark every file as from the internet; without this .NET refuses the window's DLLs.
+    for exe in ('python', 'pythonw'):
+        assert 'loadFromRemoteSources enabled="true"' in (ROOT / 'python' / f'{exe}.exe.config').read_text()
+    print('PASS: a failed launch says why and logs it; .NET loads DLLs from a downloaded zip.')
+
+
 if __name__ == '__main__':
     main_test()
+    failed_launch_test()

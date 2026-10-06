@@ -243,6 +243,79 @@ export function promptDialog({ title, text, value = '', ok = '저장', type = 't
   });
 }
 
+// ---------------------------------------------------------------- prompt viewer
+// What NovelAI writes into its PNGs: tEXt chunks, "Comment" holding the request as JSON and "Source" the model.
+// Null for anything else (another kind of file, or a picture whose metadata a site stripped).
+export function novelaiMeta(bytes) {
+  const PNG = [137, 80, 78, 71, 13, 10, 26, 10];
+  if (bytes.length < 8 || PNG.some((b, i) => bytes[i] !== b)) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const utf8 = new TextDecoder();
+  const texts = {};
+  for (let at = 8; at + 8 <= bytes.length;) {
+    const size = view.getUint32(at), type = utf8.decode(bytes.subarray(at + 4, at + 8));
+    if (type === 'IEND') break;
+    if (type === 'tEXt') {
+      const body = bytes.subarray(at + 8, at + 8 + size), zero = body.indexOf(0);
+      texts[utf8.decode(body.subarray(0, zero))] = utf8.decode(body.subarray(zero + 1));
+    }
+    at += 12 + size;
+  }
+  try {
+    const meta = JSON.parse(texts.Comment);
+    return typeof meta === 'object' && meta ? { ...meta, source: texts.Source || '' } : null;
+  } catch {
+    return null;
+  }
+}
+
+// A NovelAI picture dropped on the window: its prompts and settings, each prompt with a copy button, and its
+// artists (of the prompt and character prompts; the undesired content names artists to avoid) to register at once.
+export async function promptViewer(app, file) {
+  const meta = novelaiMeta(new Uint8Array(await file.arrayBuffer()));
+  if (!meta) return toast('NovelAI 프롬프트 정보가 없는 그림입니다. NovelAI에서 받은 PNG 원본을 놓아 주세요 (SNS에 올렸던 그림·캡처는 정보가 지워져 있습니다).', 'warn');
+  const caption = meta.v4_prompt?.caption;
+  const base = caption?.base_caption ?? meta.prompt ?? '';
+  const characters = (caption?.char_captions || []).map((c) => c.char_caption).filter(Boolean);
+  const negative = meta.v4_negative_prompt?.caption?.base_caption ?? meta.uc ?? '';
+  const scan = await run(post('/api/artists/scan', { text: [base, ...characters].join('\n') }));
+  const settings = [meta.source.replace(/\s+[0-9A-F]{8}$/, ''), meta.width && `${meta.width}×${meta.height}`,
+    meta.steps && `${meta.steps} steps`, meta.scale != null && `CFG ${meta.scale}`, meta.cfg_rescale && `Rescale ${meta.cfg_rescale}`,
+    meta.sampler, meta.seed != null && `시드 ${meta.seed}`, meta.skip_cfg_above_sigma && 'Variety+'].filter(Boolean).join(' · ');
+  const url = URL.createObjectURL(file);
+  const section = (title, text) => h('div', { class: 'viewer-section' },
+    h('div', { class: 'row' }, h('h4', {}, title), h('span', { class: 'spacer' }),
+      h('button', { class: 'btn ghost sm labeled', onclick: () => copyText(text, `${title}: 복사했습니다.`) }, icon('copy'), '복사')),
+    h('div', { class: 'viewer-text' }, text));
+  // Weight and name, as in the arena; the ones not registered yet are highlighted.
+  const fresh = new Set(scan.new);
+  const artistChips = tagList(scan.pairs, { open: true });
+  [...artistChips.children].forEach((chip, i) => chip.classList.toggle('diff', fresh.has(scan.pairs[i].tag)));
+  await modal((dialog, done) => {
+    dialog.classList.add('viewer');
+    const register = async () => {
+      const result = await app.act(post('/api/artists/add', { text: scan.new.join(', ') }));
+      toast(`작가 ${result.added}명을 등록했습니다.`, 'ok');
+      done(null);
+      if (app.route === 'library') app.go('library');  // its table shows the new names
+    };
+    dialog.append(h('h3', {}, '프롬프트 뷰어'), h('p', {}, file.name),
+      h('div', { class: 'viewer-body' }, h('img', { src: url, alt: '' }),
+        h('div', { class: 'viewer-info' },
+          h('div', { class: 'viewer-section' }, h('h4', {}, `작가 ${scan.pairs.length}명 · 미등록 작가 ${scan.new.length}명`),
+            scan.pairs.length ? artistChips : h('p', { class: 'muted' }, '프롬프트에 artist: 태그가 없습니다.')),
+          section('프롬프트', base),
+          characters.map((c, i) => section(`캐릭터 ${i + 1}`, c)),
+          negative ? section('네거티브', negative) : null,
+          settings ? h('p', { class: 'note' }, settings) : null)),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn ghost', onclick: () => done(null) }, '닫기'),
+        h('button', { class: 'btn primary', disabled: !scan.new.length, onclick: register }, icon('plus'),
+          scan.new.length ? `새 작가 ${scan.new.length}명 일괄 등록` : scan.pairs.length ? '모두 등록되어 있음' : '등록할 작가 없음')));
+  });
+  URL.revokeObjectURL(url);
+}
+
 // ---------------------------------------------------------------- lightbox & originals
 export function lightbox(src) {
   const root = document.getElementById('overlay-root');
