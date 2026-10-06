@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import threading
@@ -93,7 +94,12 @@ class Updater:
             self._set(state='idle', error=message)
             return self.view()
         except Exception as exc:
-            self._set(state='idle', error=f'업데이트를 확인하지 못했습니다. 인터넷 연결을 확인해 주세요. ({exc})')
+            if isinstance(getattr(exc, 'reason', None), ssl.SSLCertVerificationError):  # not the connection
+                message = ('GitHub의 보안 인증서를 확인하지 못했습니다. 백신의 HTTPS(웹) 검사 기능을 끄거나, '
+                           '브라우저로 https://github.com 에 한 번 접속한 뒤 다시 시도해 주세요.')
+            else:
+                message = f'업데이트를 확인하지 못했습니다. 인터넷 연결을 확인해 주세요. ({exc})'
+            self._set(state='idle', error=message)
             return self.view()
         tag = release.get('tag_name') if isinstance(release, dict) else None
         latest, current = parse_version(tag), parse_version(self.version)

@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import ssl
 import sys
 import tempfile
 import threading
@@ -97,6 +98,11 @@ def checks_and_installs(tmp):
         raise OSError('no network')
     view = Updater(root, '4.0.0', 'o/r', fetch=offline).check()
     assert view['state'] == 'idle' and '인터넷' in view['error']
+
+    def untrusted(url, accept):  # an antivirus scanning HTTPS, say
+        raise urllib.error.URLError(ssl.SSLCertVerificationError(1, 'certificate verify failed'))
+    view = Updater(root, '4.0.0', 'o/r', fetch=untrusted).check()
+    assert view['state'] == 'idle' and '인증서' in view['error'] and '인터넷' not in view['error']
     try:
         Updater(root, '4.0.0', 'o/r', fetch=offline).install(lambda: None)
         raise AssertionError('nothing to install')

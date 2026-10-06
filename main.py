@@ -21,6 +21,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'app'))
 
+import truststore  # noqa: E402
+
+# HTTPS certificates checked by Windows itself, as a browser does: Python alone reads only the roots already in the
+# store, so a PC that never fetched GitHub's root (Windows gets them on demand) or that has an antivirus scanning
+# HTTPS failed with CERTIFICATE_VERIFY_FAILED.
+truststore.inject_into_ssl()
+
 from bridge import App, open_external  # noqa: E402
 from core import NewerDataError  # noqa: E402
 from engine import Engine  # noqa: E402
