@@ -124,6 +124,7 @@ class App:
             '/api/artists/rename': lambda: e.rename_artist(body.get('old'), body.get('new')),
             '/api/artists/delete': lambda: e.delete_artists(body.get('tags', [])),
             '/api/generate/random': lambda: e.start_random(body.get('count')),
+            '/api/generate/custom': lambda: e.start_custom(body.get('text', '')),
             '/api/generate/free': lambda: e.start_free(body.get('prompt', '')),
             '/api/job/stop': e.stop_job,
             '/api/combos/revive': lambda: {'revived': e.revive(ids)},

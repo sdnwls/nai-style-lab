@@ -3,8 +3,8 @@ import { get, post } from '../api.js';
 import { h, morph, limits, icon, toast, fmt, confirmDialog, promptDialog, shortTag, pickSelect, selectionKeys, pageHead, card } from '../ui.js';
 
 let root, app, artists = [];
-// addText / countDraft: what is typed in the artist box and "만들 개수" (the count until a start saves it).
-const view = { q: '', sort: 'score', dir: -1, selected: new Set(), anchor: null, addText: '', countDraft: null };
+// addText / customText / countDraft: what is typed in the artist and combo boxes and "만들 개수" (the count until a start saves it).
+const view = { q: '', sort: 'score', dir: -1, selected: new Set(), anchor: null, addText: '', countDraft: null, customText: '' };
 
 function sorted() {
   const q = view.q.trim().toLowerCase();
@@ -68,6 +68,7 @@ function render() {
         h('label', { class: 'search', style: { display: 'block', marginBottom: '10px' } }, icon('search'), search),
         h('div', { style: { flex: 1, minHeight: 0 } }, artistTable()),  // the table takes whatever height the window has left
         tableBar()),
+      h('div', { class: 'stack', style: { gap: '16px' } },
       card({ icon: 'sparkle', tone: 'sky', title: '무작위 조합 만들기', desc: '등록한 작가 중 몇 명을 골라 가중치를 붙인 조합을 만들고, 바로 그림을 생성합니다.' },
         h('div', { class: 'grid', style: { gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' } },
           rule('조합당 작가 수', pair(ruleInput('gen_min'), ruleInput('gen_max'))),
@@ -78,7 +79,13 @@ function render() {
         h('div', { class: 'row' }, h('span', { class: 'field-label' }, '만들 개수'), count, h('span', { class: 'spacer' }),
           h('button', { class: 'btn primary lg', disabled: working, onclick: () => generate(Number(view.countDraft ?? settings.gen_count)) }, icon('zap'), working ? '생성 중…' : '만들기')),
         h('p', { class: 'note' },
-          '작가 수와 가중치 범위는 진화와 다듬기에도 그대로 적용됩니다.'))));
+          '작가 수와 가중치 범위는 진화와 다듬기에도 그대로 적용됩니다.')),
+      card({ icon: 'pen', tone: 'mint', title: '특정 조합 만들기', desc: '적은 작가와 가중치 그대로 조합을 하나 만들고, 바로 그림을 생성합니다.' },
+        h('textarea', { class: 'textarea', rows: 3, value: view.customText, oninput: (e) => { view.customText = e.currentTarget.value; },
+          placeholder: '예) 1.2::artist:rurudo ::, 0.9::artist:shigure ui ::\n프롬프트를 붙여 넣어도 artist: 태그와 가중치만 씁니다.' }),
+        h('div', { class: 'row', style: { marginTop: '10px' } },
+          h('span', { class: 'note' }, '등록되지 않은 작가는 함께 등록됩니다.'), h('span', { class: 'spacer' }),
+          h('button', { class: 'btn primary lg', disabled: working, onclick: makeCustom }, icon('zap'), working ? '생성 중…' : '만들기'))))));
 }
 
 function rule(label, value, style) {
@@ -148,6 +155,13 @@ async function removeSelected() {
 async function generate(count) {
   await app.act(post('/api/generate/random', { count }), `조합 ${count}개를 만들기 시작했습니다. 완성되는 대로 대결에서 자리를 찾을 수 있습니다.`);
   view.countDraft = null;  // saved as the default now
+}
+
+async function makeCustom() {
+  if (!view.customText.trim()) return toast('조합을 입력해 주세요.', 'warn');
+  await app.act(post('/api/generate/custom', { text: view.customText }), '조합을 만들기 시작했습니다. 완성되면 대결에서 자리를 찾을 수 있습니다.');
+  view.customText = '';
+  render();
 }
 
 export default {

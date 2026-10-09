@@ -550,7 +550,18 @@ def busy_starts():
             engine.start_free(f'p{n}')
             wait_job(engine)
         assert len(engine.state['free_results']) == 32
-    print('PASS: refused starts leave no state, refine follows the current champion, free results kept.')
+
+        # ---- a typed combo is drawn as written and joins the list; new artists are registered
+        before = len(engine.combos)
+        engine.start_custom('1girl, 1.2::artist:a0, artist:new one ::, -1::artist:a1 ::')
+        wait_job(engine)
+        made = engine.combos[-1]
+        assert len(engine.combos) == before + 1 and fake.calls[-1]['style'] == made['style']
+        assert made['style'] == '1.2::artist:a0 ::, 1.2::artist:new_one ::' and not made['placed']
+        assert 'artist:new_one' in {a['tag'] for a in engine.state['artists']}
+        assert refuses(engine.start_custom, '1.2::artist:a0::, 1.2::artist:new one::'), 'the same combo twice'
+        assert refuses(engine.start_custom, '1girl'), 'no artist tag'
+    print('PASS: refused starts leave no state, refine follows the current champion, free results kept, custom combos.')
 
 
 def auto_subscription():

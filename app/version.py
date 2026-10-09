@@ -3,5 +3,5 @@ r"""This release's version, and where releases are published (GitHub Releases of
 Releasing: raise VERSION here, build with _dev\make_release.bat, then publish the zip under the tag v<VERSION>
 (see README). A release that changes the state.json format also raises core.SCHEMA with an upgrade step.
 """
-VERSION = '4.1.2'
+VERSION = '4.1.3'
 REPO = 'sdnwls/nai-style-lab'

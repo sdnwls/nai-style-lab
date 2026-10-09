@@ -460,6 +460,38 @@ class Engine:
         with self.lock:
             self._start_job('random', '새 조합 생성', count, work)
 
+    def start_custom(self, text):
+        """One combo exactly as typed (its artist: tags and weights), drawn and added like a random one.
+        Artists it names that are not registered yet are registered too."""
+        scan = self.scan_artists(text)
+        if not scan['pairs']:
+            raise UserError('artist: 태그를 하나 이상 넣어 주세요.')
+        style = core.style_from_pairs([(p['w'], p['tag']) for p in scan['pairs']])
+        with self.lock:
+            if any(c['style'] == style for c in self.combos + self.retired):
+                raise UserError('이미 그림체 목록에 있는 조합입니다.')
+            settings = self._gen_settings()
+            self.save()
+
+        def work(job):
+            name = self._render(job, settings, style, settings['seed'])
+            with self.lock:
+                job['done'] = 1
+                if not name:
+                    return
+                used = {p['tag'] for p in scan['pairs']}
+                for tag in scan['new']:
+                    self.state['artists'].append({'tag': tag, 'count': 0, 'arena_matches': 0, 'arena_wins': 0})
+                for artist in self.state['artists']:
+                    if artist['tag'] in used:
+                        artist['count'] += 1
+                self.combos.append(self._new_combo(style, name, settings, generation=self.selection['generation'] - 1))
+                self.save()
+                self._event('ok', '조합을 만들었습니다. 대결에서 자리를 찾아 주세요.')
+
+        with self.lock:
+            self._start_job('custom', '조합 생성', 1, work)
+
     def start_free(self, prompt):
         with self.lock:
             settings = self._gen_settings()
