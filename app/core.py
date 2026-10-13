@@ -6,6 +6,7 @@ Most of this is carried over unchanged from v3.6 (recovered from the original by
 import bisect
 import http.client
 import io
+import itertools
 import json
 import math
 import os
@@ -168,16 +169,18 @@ def extract_png_from_zip(data: bytes) -> bytes:
         return data
     raise ValueError('응답에서 PNG를 추출하지 못했습니다.')
 
-def character_prompt_parts(value: list[str]) -> list[str]:
-    if isinstance(value, list) and all(isinstance(part, str) for part in value):
-        return [part.strip() for part in value if part.strip()]
+def character_prompt_parts(prompts: list[str], negatives=()) -> list[tuple[str, str]]:
+    """(prompt, negative) per character, by position; a character without a prompt is left out."""
+    if all(isinstance(v, (list, tuple)) and all(isinstance(part, str) for part in v) for v in (prompts, negatives)):
+        pairs = itertools.zip_longest(prompts, negatives[:len(prompts)], fillvalue='')
+        return [(p.strip(), n.strip()) for p, n in pairs if p.strip()]
     raise ValueError('캐릭터 프롬프트 형식이 올바르지 않습니다.')
 
 
 def generate_style_image(api_key: str, base_prompt: str, character_prompt: list[str],
                          style_str: str, negative_prompt: str, model: str,
                          width: int, height: int, steps: int, cfg: float,
-                         sampler: str, seed: int, cfg_rescale: float) -> bytes:
+                         sampler: str, seed: int, cfg_rescale: float, character_negative=()) -> bytes:
     base = base_prompt.strip()
     style = style_str.strip()
     if '{artist}' not in base:
@@ -189,18 +192,18 @@ def generate_style_image(api_key: str, base_prompt: str, character_prompt: list[
     if not base_caption:
         raise ValueError('프롬프트가 비어 있습니다.')
     # Every character, each once, in its own slot (as the site sends them: positions left to the AI).
-    char_list = character_prompt_parts(character_prompt)
+    chars = character_prompt_parts(character_prompt, character_negative)
     center = {'x': 0.5, 'y': 0.5}
     parameters = {
         'params_version': 4, 'width': width, 'height': height, 'scale': cfg, 'sampler': sampler, 'steps': steps,
         'seed': seed, 'n_samples': 1, 'cfg_rescale': cfg_rescale, **WEB_PARAMS,
         'v4_prompt': {'caption': {'base_caption': base_caption,
-                                  'char_captions': [{'char_caption': c, 'centers': [center]} for c in char_list]},
+                                  'char_captions': [{'char_caption': c, 'centers': [center]} for c, _ in chars]},
                       'use_coords': False, 'use_order': True},
         'v4_negative_prompt': {'caption': {'base_caption': negative_prompt,
-                                           'char_captions': [{'char_caption': '', 'centers': [center]} for _ in char_list]}},
+                                           'char_captions': [{'char_caption': n, 'centers': [center]} for _, n in chars]}},
         'negative_prompt': negative_prompt,
-        'characterPrompts': [{'prompt': c, 'uc': '', 'center': center, 'enabled': True} for c in char_list],
+        'characterPrompts': [{'prompt': c, 'uc': n, 'center': center, 'enabled': True} for c, n in chars],
     }
     # input is the base prompt alone: the site imports it (the PNG's "prompt") as its base prompt, so with the
     # characters in it too they would come back twice, once there and once in their own slots.
@@ -229,7 +232,7 @@ def generate_for_settings(settings, style, seed, stop_event, log=None):
                 settings['api_key'], settings['base_prompt'], settings['character_prompt'],
                 style, settings['negative'], settings['model'], settings['width'],
                 settings['height'], settings['steps'], settings['cfg'], settings['sampler'],
-                seed, cfg_rescale=settings['cfg_rescale'])
+                seed, cfg_rescale=settings['cfg_rescale'], character_negative=settings['character_negative'])
         except NaiHttpError as exc:
             if exc.status not in RETRY_STATUSES or delay is None:
                 raise
@@ -262,24 +265,26 @@ def _looks_like_number(token: str) -> bool:
 # A NovelAI weight group, "1.2::tags::" (unclosed, it runs to the end); a negative one pushes its tags away.
 WEIGHT_GROUP_RE = re.compile(r'(-?(?:\d+\.?\d*|\.\d+))::(.*?)(?:::|$)', re.S)
 PROMPT_ARTIST_RE = re.compile(r'artist:[^:,{}\[\]|\n]+')
+# A slot the 특정 조합 만들기 card fills with a registered artist drawn at random, one per image.
+RANDOM_SLOT_RE = re.compile(r'__random__')
 
 
-def artist_weights_in_prompt(text: str) -> list:
+def artist_weights_in_prompt(text: str, pattern=PROMPT_ARTIST_RE, bare=1.0) -> list:
     """(weight, tag) for the artist: tags of a whole prompt and nothing else (no 1girl, no quality tags); the
-    weight is its "w::...::" group's, 1 outside one. One in a negative group is left out: it is there to push that
-    style away."""
+    weight is its "w::...::" group's, ``bare`` outside one. One in a negative group is left out: it is there to
+    push that style away. ``pattern`` finds other things the same way (__random__ slots)."""
     # ponytail: {} / [] emphasis (x1.05 per level) is not counted, the weight shows as its group's
     found, at = [], 0
 
     def take(chunk, weight):
-        found.extend((weight, t.strip()) for t in PROMPT_ARTIST_RE.findall(chunk) if t.strip() != 'artist:')
+        found.extend((weight, t.strip()) for t in pattern.findall(chunk) if t.strip() != 'artist:')
 
     for group in WEIGHT_GROUP_RE.finditer(text):
-        take(text[at:group.start()], 1.0)
+        take(text[at:group.start()], bare)
         if float(group.group(1)) > 0:
             take(group.group(2), float(group.group(1)))
         at = group.end()
-    take(text[at:], 1.0)
+    take(text[at:], bare)
     return found
 
 

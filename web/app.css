@@ -235,6 +235,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field > label, .field-label { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+.field-label { white-space: nowrap; }  /* "만들 개수" never breaks next to its box */
 .field .help { font-size: 12px; color: var(--text-3); }
 .input, .select, .textarea {
   width: 100%; background: var(--bg); border: 1px solid var(--line-2); border-radius: 10px; padding: 9px 12px;
@@ -243,7 +244,8 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .input { height: 38px; }
 /* Edge adds its own reveal eye to password fields; the app has its own show-key button. */
 input::-ms-reveal, input::-ms-clear { display: none; }
-.textarea { resize: vertical; min-height: 88px; line-height: 1.55; font-family: var(--mono); font-size: 12.5px; }
+textarea { resize: none; }  /* no drag handle on any box */
+.textarea { min-height: 88px; line-height: 1.55; font-family: var(--mono); font-size: 12.5px; }
 .textarea.grow { field-sizing: content; resize: none; }  /* grows with what is typed (prompt boxes) */
 .input:focus, .select:focus, .textarea:focus { border-color: var(--accent-line); box-shadow: 0 0 0 4px var(--accent-soft); }
 .select {
@@ -254,8 +256,13 @@ input::-ms-reveal, input::-ms-clear { display: none; }
 .select option { background: var(--surface-2); }
 .input-group { display: flex; align-items: center; gap: 8px; }
 .input-group .input { flex: 1; }
-.range-pair { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
+.range-pair { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: center; }
 .range-pair span { color: var(--text-3); }
+/* Two ranges side by side leave each box ~43px at the narrowest window: the left inset of every other box,
+   a small right one, so the number shows. */
+.range-pair .input { padding-right: 4px; min-width: 0; }
+/* Number boxes are typed into only: no spin buttons anywhere (app.js also stops ↑/↓ and the wheel). */
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .search { position: relative; }
 .search svg { position: absolute; left: 11px; top: 50%; width: 16px; height: 16px; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
 .search .input { padding-left: 34px; }

@@ -4,7 +4,8 @@ import { h, morph, limits, icon, toast, fmt, confirmDialog, promptDialog, shortT
 
 let root, app, artists = [];
 // addText / customText / countDraft: what is typed in the artist and combo boxes and "만들 개수" (the count until a start saves it).
-const view = { q: '', sort: 'score', dir: -1, selected: new Set(), anchor: null, addText: '', countDraft: null, customText: '' };
+// customCount: 특정 조합 만들기's own count (only a combo with __random__ makes more than one).
+const view = { q: '', sort: 'score', dir: -1, selected: new Set(), anchor: null, addText: '', countDraft: null, customText: '', customCount: 1 };
 
 function sorted() {
   const q = view.q.trim().toLowerCase();
@@ -37,7 +38,7 @@ function artistTable() {
 
 function tableBar() {
   return h('div', { class: 'row', style: { marginTop: '10px' } },
-    h('span', { class: 'note' }, view.selected.size ? `${view.selected.size}명 선택 · Delete로 삭제` : 'Shift/Ctrl로 여러 명 선택 · 한 명을 고르면 이름을 바꿀 수 있습니다'),
+    h('span', { class: 'note' }, view.selected.size ? `${view.selected.size}명 선택 · Delete로 삭제` : 'Shift/Ctrl로 여러 명 선택'),
     h('span', { class: 'spacer' }),
     // Renaming is for one artist: its button shows next to delete while exactly one is selected.
     view.selected.size === 1 ? h('button', { class: 'btn sm', onclick: () => rename([...view.selected][0]) }, icon('pen'), '이름 바꾸기') : null,
@@ -47,9 +48,9 @@ function tableBar() {
 function render() {
   const settings = app.settings;
   const input = h('textarea', { class: 'textarea', rows: 4, value: view.addText, oninput: (e) => { view.addText = e.currentTarget.value; },
-    placeholder: '예) artist:shigure ui, 1.2::artist:rurudo ::\n프롬프트를 통째로 붙여 넣어도 artist: 태그만 등록합니다.\nartist: 없이 이름만 쓰면 쉼표·줄바꿈으로 나눈 이름을 모두 등록합니다.' });
+    placeholder: 'artist:shigure ui, artist:rurudo\n프롬프트 전체를 붙여 넣어도 artist: 태그만 등록' });
   const search = h('input', { class: 'input', type: 'search', placeholder: '작가 검색', value: view.q, oninput: (e) => { view.q = e.currentTarget.value; render(); } });
-  const count = h('input', { class: 'input', type: 'number', ...limits('gen_count'), value: view.countDraft ?? settings.gen_count, style: { width: '96px' },
+  const count = h('input', { class: 'input', type: 'number', ...limits('gen_count'), value: view.countDraft ?? settings.gen_count, style: { width: '64px' },
     oninput: (e) => { view.countDraft = e.currentTarget.value; } });
   const working = app.status?.job?.running;
   morph(root,
@@ -60,7 +61,7 @@ function render() {
         ? h('div', { class: 'row', style: { marginTop: '14px' } }, h('button', { class: 'btn primary', onclick: confirmArtists }, icon('check'), '이 목록 그대로 사용'),
           h('span', { class: 'note' }, '작가를 더하거나 빼면 확인한 것으로 저장됩니다.')) : null }),
     h('div', { class: 'grid', style: { gridTemplateColumns: 'minmax(0, 1.25fr) minmax(0, 1fr)', gridTemplateRows: 'minmax(0, 1fr)', alignItems: 'start', flex: 1, minHeight: 0 } },
-      card({ icon: 'users', title: `작가 ${fmt(artists.length)}명`, desc: '점수는 이 작가가 들어간 조합들의 Elo에서 떼어 낸 작가의 몫입니다 (평균 0, 가중치 1 기준). 들어간 조합이 적으면 0에 가깝게 나옵니다.',
+      card({ icon: 'users', title: `작가 ${fmt(artists.length)}명`, desc: '점수는 이 작가가 조합 순위에 기여한 정도입니다.',
         style: { alignSelf: 'stretch', display: 'flex', flexDirection: 'column', minHeight: 0 } },
         input,
         h('div', { class: 'row', style: { margin: '10px 0 18px' } }, h('span', { class: 'spacer' }),
@@ -69,7 +70,7 @@ function render() {
         h('div', { style: { flex: 1, minHeight: 0 } }, artistTable()),  // the table takes whatever height the window has left
         tableBar()),
       h('div', { class: 'stack', style: { gap: '16px' } },
-      card({ icon: 'sparkle', tone: 'sky', title: '무작위 조합 만들기', desc: '등록한 작가 중 몇 명을 골라 가중치를 붙인 조합을 만들고, 바로 그림을 생성합니다.' },
+      card({ icon: 'sparkle', tone: 'sky', title: '무작위 조합 만들기', desc: '등록한 작가를 랜덤으로 선택해 랜덤 가중치를 붙여 그림을 생성합니다.' },
         h('div', { class: 'grid', style: { gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' } },
           rule('조합당 작가 수', pair(ruleInput('gen_min'), ruleInput('gen_max'))),
           rule('가중치 범위', pair(ruleInput('global_min_w', 0.1), ruleInput('global_max_w', 0.1))),
@@ -80,12 +81,16 @@ function render() {
           h('button', { class: 'btn primary lg', disabled: working, onclick: () => generate(Number(view.countDraft ?? settings.gen_count)) }, icon('zap'), working ? '생성 중…' : '만들기')),
         h('p', { class: 'note' },
           '작가 수와 가중치 범위는 진화와 다듬기에도 그대로 적용됩니다.')),
-      card({ icon: 'pen', tone: 'mint', title: '특정 조합 만들기', desc: '적은 작가와 가중치 그대로 조합을 하나 만들고, 바로 그림을 생성합니다.' },
+      card({ icon: 'pen', tone: 'mint', title: '특정 조합 만들기', desc: '적은 작가와 가중치 그대로 조합을 만들고, 바로 그림을 생성합니다.' },
         h('textarea', { class: 'textarea', rows: 3, value: view.customText, oninput: (e) => { view.customText = e.currentTarget.value; },
-          placeholder: '예) 1.2::artist:rurudo ::, 0.9::artist:shigure ui ::\n프롬프트를 붙여 넣어도 artist: 태그와 가중치만 씁니다.' }),
+          placeholder: '1.2::artist:rurudo ::, __random__, __random__\n__random__: 등록된 작가 중 무작위' }),
         h('div', { class: 'row', style: { marginTop: '10px' } },
-          h('span', { class: 'note' }, '등록되지 않은 작가는 함께 등록됩니다.'), h('span', { class: 'spacer' }),
-          h('button', { class: 'btn primary lg', disabled: working, onclick: makeCustom }, icon('zap'), working ? '생성 중…' : '만들기'))))));
+          h('span', { class: 'field-label' }, '만들 개수'),
+          h('input', { class: 'input', type: 'number', ...limits('gen_count'), value: view.customCount, style: { width: '64px' },
+            title: '__random__이 있을 때만 여러 개를 만듭니다.', oninput: (e) => { view.customCount = e.currentTarget.value; } }),
+          h('span', { class: 'spacer' }),
+          h('button', { class: 'btn primary lg', disabled: working, onclick: makeCustom }, icon('zap'), working ? '생성 중…' : '만들기')),
+        h('p', { class: 'note' }, '등록되지 않은 작가는 함께 등록됩니다.')))));
 }
 
 function rule(label, value, style) {
@@ -159,8 +164,9 @@ async function generate(count) {
 
 async function makeCustom() {
   if (!view.customText.trim()) return toast('조합을 입력해 주세요.', 'warn');
-  await app.act(post('/api/generate/custom', { text: view.customText }), '조합을 만들기 시작했습니다. 완성되면 대결에서 자리를 찾을 수 있습니다.');
-  view.customText = '';
+  await app.act(post('/api/generate/custom', { text: view.customText, count: Number(view.customCount) }),
+    '조합을 만들기 시작했습니다. 완성되는 대로 대결에서 자리를 찾을 수 있습니다.');
+  if (!view.customText.includes('__random__')) view.customText = '';  // a template with slots is kept to use again
   render();
 }
 

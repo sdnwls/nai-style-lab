@@ -309,7 +309,9 @@ export async function promptViewer(app, file) {
   if (!meta) return toast('NovelAI 프롬프트 정보가 없는 그림입니다. NovelAI에서 받은 PNG 원본을 놓아 주세요 (SNS에 올렸던 그림·캡처는 정보가 지워져 있습니다).', 'warn');
   const caption = meta.v4_prompt?.caption;
   const base = caption?.base_caption ?? meta.prompt ?? '';
-  const characters = (caption?.char_captions || []).map((c) => c.char_caption).filter(Boolean);
+  const charNegatives = meta.v4_negative_prompt?.caption?.char_captions || [];
+  const chars = (caption?.char_captions || []).map((c, i) => [c.char_caption, charNegatives[i]?.char_caption]).filter(([c]) => c);
+  const characters = chars.map(([c]) => c);
   const negative = meta.v4_negative_prompt?.caption?.base_caption ?? meta.uc ?? '';
   const scan = await run(post('/api/artists/scan', { text: [base, ...characters].join('\n') }));
   const settings = [meta.source.replace(/\s+[0-9A-F]{8}$/, ''), meta.width && `${meta.width}×${meta.height}`,
@@ -338,7 +340,7 @@ export async function promptViewer(app, file) {
           h('div', { class: 'viewer-section' }, h('h4', {}, `작가 ${scan.pairs.length}명 · 미등록 작가 ${scan.new.length}명`),
             scan.pairs.length ? artistChips : h('p', { class: 'muted' }, '프롬프트에 artist: 태그가 없습니다.')),
           section('프롬프트', base),
-          characters.map((c, i) => section(`캐릭터 ${i + 1}`, c)),
+          chars.map(([c, n], i) => [section(`캐릭터 ${i + 1}`, c), n ? section(`캐릭터 ${i + 1} 네거티브`, n) : null]),
           negative ? section('네거티브', negative) : null,
           settings ? h('p', { class: 'note' }, settings) : null)),
       h('div', { class: 'actions' },

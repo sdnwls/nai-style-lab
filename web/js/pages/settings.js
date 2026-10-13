@@ -53,7 +53,7 @@ function field(label, control, help) {
 }
 
 function number(key, { step = 1, width } = {}) {
-  // The spin buttons, arrow keys and wheel each change the value: remember every step, save once when the
+  // Typed only (no spin buttons, ↑/↓ or wheel; see app.js): remember what is typed, save once when the
   // field is left (or Enter), like the text fields. Its limits come from the server's one table.
   return h('input', { class: 'input num', type: 'number', step, ...limits(key), value: s()[key], style: width ? { width } : null,
     oninput: (e) => { const v = e.currentTarget.value; if (v !== '') stage(key, step < 1 ? parseFloat(v) : parseInt(v, 10)); },
@@ -118,13 +118,17 @@ function prompts() {
     oninput: (e) => stage('base_prompt', e.currentTarget.value), onchange: flush });
   const negative = h('textarea', { class: 'textarea grow', rows: 4, value: s().negative,
     oninput: (e) => stage('negative', e.currentTarget.value), onchange: flush });
-  chars ??= [...(s().character_prompt || [])];
-  const list = h('div', { class: 'stack' }, chars.map((text, i) =>
+  chars ??= (s().character_prompt || []).map((p, i) => ({ p, n: s().character_negative?.[i] ?? '' }));
+  // Both lists go together, so the server keeps each negative with its character.
+  const stageChars = () => { stage('character_prompt', chars.map((c) => c.p)); stage('character_negative', chars.map((c) => c.n)); };
+  const box = (c, key, placeholder) => h('textarea', { class: 'textarea grow', rows: 2, value: c[key], placeholder,
+    oninput: (e) => { c[key] = e.currentTarget.value; stageChars(); }, onchange: flush });
+  const list = h('div', { class: 'stack' }, chars.map((c, i) =>
     h('div', { class: 'row', style: { alignItems: 'flex-start' } }, h('span', { class: 'badge', style: { marginTop: '8px' } }, `캐릭터 ${i + 1}`),
-      h('textarea', { class: 'textarea grow', rows: 2, value: text, placeholder: `캐릭터 ${i + 1} 프롬프트`,
-        oninput: (e) => { chars[i] = e.currentTarget.value; stage('character_prompt', chars.slice()); }, onchange: flush }),
-      h('button', { class: 'btn ghost icon-btn', 'aria-label': '삭제', onclick: () => { chars.splice(i, 1); save('character_prompt', chars.slice()); render(); } }, icon('x')))),
-    h('button', { class: 'btn sm', style: { alignSelf: 'flex-start' }, onclick: () => { chars.push(''); render(); } }, icon('plus'), '캐릭터 추가'));
+      h('div', { class: 'stack', style: { flex: 1, gap: '6px' } },
+        box(c, 'p', `캐릭터 ${i + 1} 프롬프트`), box(c, 'n', `캐릭터 ${i + 1} 네거티브`)),
+      h('button', { class: 'btn ghost icon-btn', 'aria-label': '삭제', onclick: () => { chars.splice(i, 1); stageChars(); flush(); render(); } }, icon('x')))),
+    h('button', { class: 'btn sm', style: { alignSelf: 'flex-start' }, onclick: () => { chars.push({ p: '', n: '' }); render(); } }, icon('plus'), '캐릭터 추가'));
   return section('brush', 'rose', '프롬프트', '작가 조합은 기본 프롬프트의 {artist} 자리에 들어갑니다. {artist}가 없으면 맨 앞에 붙습니다.',
     h('div', { class: 'stack' },
       field('기본 프롬프트', base, h('span', {}, h('code', {}, '{artist}'), ' 위치에 작가 태그가 들어갑니다.')),

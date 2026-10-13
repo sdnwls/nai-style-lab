@@ -386,6 +386,21 @@ def guards():
         assert [c['char_caption'] for c in p['v4_prompt']['caption']['char_captions']] == ['ahri', 'ahri', 'sona']
         assert [c['prompt'] for c in p['characterPrompts']] == ['ahri', 'ahri', 'sona']
         assert len(p['v4_negative_prompt']['caption']['char_captions']) == 3
+        # Each character's negative goes in its own slot, by position (a missing one is empty).
+        core.http.client.HTTPSConnection = FakeConnection
+        try:
+            core.generate_style_image('k', '2girls', ['ahri', 'sona'], '', '', 'm', 64, 64, 1, 5.0, 's', 1, 0.0,
+                                      character_negative=['tail'])
+        finally:
+            core.http.client.HTTPSConnection = real
+        p = sent['parameters']
+        assert [c['char_caption'] for c in p['v4_negative_prompt']['caption']['char_captions']] == ['tail', '']
+        assert [c['uc'] for c in p['characterPrompts']] == ['tail', '']
+        # Saving drops an empty character together with its negative; the others keep theirs.
+        engine.update_settings({'character_prompt': ['ahri', ' ', 'sona'], 'character_negative': ['tail', 'x', 'hat']})
+        s = engine.settings()
+        assert (s['character_prompt'], s['character_negative']) == (['ahri', 'sona'], ['tail', 'hat'])
+        engine.update_settings({'character_prompt': [], 'character_negative': []})
 
         engine.start_random(14)
         wait_job(engine)
@@ -561,6 +576,21 @@ def busy_starts():
         assert 'artist:new_one' in {a['tag'] for a in engine.state['artists']}
         assert refuses(engine.start_custom, '1.2::artist:a0::, 1.2::artist:new one::'), 'the same combo twice'
         assert refuses(engine.start_custom, '1girl'), 'no artist tag'
+
+        # ---- __random__ slots: a registered artist each, drawn per image, never one already in the combo
+        before = len(engine.combos)
+        engine.start_custom('1.5::artist:a0 ::, __random__, 0.7::__random__::', 3)
+        wait_job(engine)
+        made = engine.combos[before:]
+        assert len(made) == 3 and len({c['style'] for c in made}) == 3
+        s = engine.settings()
+        for combo in made:
+            (w0, t0), (w1, t1), (w2, t2) = [(float(p.split('::')[0]), p.split('::')[1]) for p in combo['style'].split(', ')]
+            assert (w0, t0, w2) == (1.5, 'artist:a0 ', 0.7) and len({t0, t1, t2}) == 3, combo['style']
+            assert s['global_min_w'] <= w1 <= s['global_max_w']
+        assert refuses(engine.start_custom, 'artist:a0, __random__', 0), 'count out of range'
+        many = ', '.join(['__random__'] * (len(engine.state['artists']) + 1))
+        assert refuses(engine.start_custom, many), 'more slots than artists'
     print('PASS: refused starts leave no state, refine follows the current champion, free results kept, custom combos.')
 
 

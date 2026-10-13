@@ -39,10 +39,11 @@ SETTING_DEFAULTS = {
     'global_min_w': 0.8, 'global_max_w': 1.8, 'gen_min': 4, 'gen_max': 8,
     'gen_count': 50, 'evo_count': 20, 'improve_variants': 4,
     'base_prompt': core.DEFAULT_BASE_PROMPT, 'character_prompt': [], 'negative': core.DEFAULT_NEGATIVE,
+    'character_negative': [],  # each character's undesired content, by position in character_prompt
     'arena_mode': 'auto', 'arena_blind': False,
     'prompt_checked': False, 'artists_checked': False,
 }
-PROMPT_KEYS = ('base_prompt', 'character_prompt', 'negative')
+PROMPT_KEYS = ('base_prompt', 'character_prompt', 'negative', 'character_negative')
 SETTING_TYPES = {key: type(value) for key, value in SETTING_DEFAULTS.items()}
 # Same limits as the settings screen: (label, low, high).
 SETTING_RANGES = {
@@ -174,7 +175,7 @@ class Engine:
             try:
                 if kind is bool and not isinstance(value, bool):
                     raise TypeError
-                value = [str(v) for v in value if str(v).strip()] if kind is list else kind(value)
+                value = [str(v) for v in value] if kind is list else kind(value)
             except (TypeError, ValueError):
                 raise UserError(f'{key} 값이 올바르지 않습니다.')
             if key == 'seed':
@@ -190,6 +191,10 @@ class Engine:
             ui[key] = value
             if key in PROMPT_KEYS:
                 ui['prompt_checked'] = True  # editing the prompt is checking it
+        if {'character_prompt', 'character_negative'} & changes.keys():
+            # Empty boxes are dropped, a character's negative going with it.
+            pairs = core.character_prompt_parts(ui.get('character_prompt', []), ui.get('character_negative', []))
+            ui['character_prompt'], ui['character_negative'] = [p for p, _ in pairs], [n for _, n in pairs]
         s = self.settings()
         if s['gen_max'] < s['gen_min']:
             raise UserError('조합당 작가 수 범위를 확인해 주세요 (최소 ≤ 최대).')
@@ -222,6 +227,7 @@ class Engine:
         return dict(api_key=self.api_key, model=s['model'], width=width, height=height, steps=s['steps'],
                     cfg=s['cfg'], cfg_rescale=s['cfg_rescale'], sampler=s['sampler'], delay=s['delay'],
                     base_prompt=s['base_prompt'], character_prompt=s['character_prompt'],
+                    character_negative=s['character_negative'],
                     negative=s['negative'], seed=int(s['seed']))
 
     # ------------------------------------------------------------------ lookups
@@ -460,37 +466,57 @@ class Engine:
         with self.lock:
             self._start_job('random', '새 조합 생성', count, work)
 
-    def start_custom(self, text):
-        """One combo exactly as typed (its artist: tags and weights), drawn and added like a random one.
+    def start_custom(self, text, count=1):
+        """Combos as typed (their artist: tags and weights), drawn and added like random ones. Each __random__
+        is a registered artist drawn per image (not one already in the combo), weighted like random combos or by
+        its "w::__random__::" group. Without one there is only the one combo to make, so ``count`` is 1.
         Artists it names that are not registered yet are registered too."""
         scan = self.scan_artists(text)
-        if not scan['pairs']:
-            raise UserError('artist: 태그를 하나 이상 넣어 주세요.')
-        style = core.style_from_pairs([(p['w'], p['tag']) for p in scan['pairs']])
+        slots = [w for w, _ in core.artist_weights_in_prompt(text, core.RANDOM_SLOT_RE, bare=None)]
+        if not scan['pairs'] and not slots:
+            raise UserError('artist: 태그나 __random__을 하나 이상 넣어 주세요.')
+        fixed = [(p['w'], p['tag']) for p in scan['pairs']]
+        try:
+            count = int(count) if slots else 1
+        except (TypeError, ValueError):
+            raise UserError('개수가 올바르지 않습니다.')
+        _, low, high = SETTING_RANGES['gen_count']
+        if not low <= count <= high:
+            raise UserError(f'개수는 {low} ~ {high} 사이로 입력해 주세요.')
         with self.lock:
-            if any(c['style'] == style for c in self.combos + self.retired):
+            s = self.settings()
+            seen = {c['style'] for c in self.combos + self.retired}
+            pool = [a['tag'] for a in self.state['artists'] if a['tag'] not in {t for _, t in fixed}]
+            if len(pool) < len(slots):
+                raise UserError(f'__random__ {len(slots)}자리를 채울 작가가 부족합니다 (적은 작가 말고 등록된 작가 {len(pool)}명).')
+            if not slots and core.style_from_pairs(fixed) in seen:
                 raise UserError('이미 그림체 목록에 있는 조합입니다.')
             settings = self._gen_settings()
             self.save()
+        low, high = s['global_min_w'], s['global_max_w']
+
+        def draw():
+            picked = random.sample(pool, len(slots))
+            weights = [core.clamp_weight(random.uniform(low, high), low, high) if w is None else w for w in slots]
+            pairs = fixed + list(zip(weights, picked))
+            return core.style_from_pairs(pairs), {t for _, t in pairs}
+
+        def keep(style, name, used):
+            registered = {a['tag'] for a in self.state['artists']}
+            self.state['artists'] += [{'tag': t, 'count': 0, 'arena_matches': 0, 'arena_wins': 0}
+                                      for t in scan['new'] if t not in registered]
+            for artist in self.state['artists']:
+                if artist['tag'] in used:
+                    artist['count'] += 1
+            self.combos.append(self._new_combo(style, name, settings, generation=self.selection['generation'] - 1))
 
         def work(job):
-            name = self._render(job, settings, style, settings['seed'])
+            made = self._draw_and_render(job, settings, count, draw, keep, seen)
             with self.lock:
-                job['done'] = 1
-                if not name:
-                    return
-                used = {p['tag'] for p in scan['pairs']}
-                for tag in scan['new']:
-                    self.state['artists'].append({'tag': tag, 'count': 0, 'arena_matches': 0, 'arena_wins': 0})
-                for artist in self.state['artists']:
-                    if artist['tag'] in used:
-                        artist['count'] += 1
-                self.combos.append(self._new_combo(style, name, settings, generation=self.selection['generation'] - 1))
-                self.save()
-                self._event('ok', '조합을 만들었습니다. 대결에서 자리를 찾아 주세요.')
+                self._event('ok', f'조합 {made}개를 만들었습니다. 대결에서 자리를 찾아 주세요.')
 
         with self.lock:
-            self._start_job('custom', '조합 생성', 1, work)
+            self._start_job('custom', '조합 생성', count, work)
 
     def start_free(self, prompt):
         with self.lock:

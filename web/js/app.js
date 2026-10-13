@@ -224,6 +224,15 @@ document.addEventListener('keydown', (event) => {
   app.page?.onKey?.(event);
 });
 
+// Number boxes take typed values only: no stepping with ↑/↓ or the wheel (their spin buttons are hidden in app.css).
+const isNumber = (el) => el instanceof HTMLInputElement && el.type === 'number';
+document.addEventListener('keydown', (event) => {
+  if (isNumber(event.target) && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) event.preventDefault();
+}, true);
+document.addEventListener('wheel', (event) => {
+  if (isNumber(event.target) && event.target === document.activeElement) event.preventDefault();
+}, { capture: true, passive: false });
+
 // ---------------------------------------------------------------- dropped pictures
 // A file dropped anywhere on the window: a NovelAI picture opens the prompt viewer (the first PNG, if several).
 // Without this the window would try to open the file itself.

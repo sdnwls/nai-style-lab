@@ -12,7 +12,7 @@ function render() {
       h('section', { class: 'card', style: { position: 'sticky', top: 0 } },
         h('div', { class: 'field' }, h('label', {}, '프롬프트 (작가 태그 자리)'),
           h('textarea', { class: 'textarea', rows: 6, value: draft, oninput: (e) => { draft = e.currentTarget.value; },
-            placeholder: '예) 1.2::artist:rurudo ::, 0.9::artist:shigure ui ::\n기본 프롬프트의 {artist} 자리에 들어갑니다.' })),
+            placeholder: '1.2::artist:rurudo ::, 0.9::artist:shigure ui ::\n기본 프롬프트의 {artist} 자리에 들어갑니다.' })),
         h('button', { class: 'btn primary lg', style: { width: '100%', marginTop: '14px' }, disabled: working, onclick: () => generate(draft) },
           icon('brush'), working ? '생성 중…' : '그리기')),
       h('section', {},
