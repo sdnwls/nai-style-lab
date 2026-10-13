@@ -126,6 +126,7 @@ class App:
             '/api/generate/random': lambda: e.start_random(body.get('count')),
             '/api/generate/custom': lambda: e.start_custom(body.get('text', ''), body.get('count', 1)),
             '/api/generate/free': lambda: e.start_free(body.get('prompt', '')),
+            '/api/generate/redraw': lambda: e.start_redraw(body.get('top') is True),
             '/api/job/stop': e.stop_job,
             '/api/combos/revive': lambda: {'revived': e.revive(ids)},
             '/api/combos/elo': lambda: e.set_elo(ids, body.get('elo')),

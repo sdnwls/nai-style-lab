@@ -518,6 +518,47 @@ class Engine:
         with self.lock:
             self._start_job('custom', '조합 생성', count, work)
 
+    def start_redraw(self, top=False):
+        """Draw every listed combo (``top``: the top 30% only) again with the current settings (another
+        character, say), replacing its picture; ratings stay. Highest Elo first, so a stopped run has redone the
+        ones that matter most. Retired combos, refine variants and free results are left as they are."""
+        with self.lock:
+            if self.state.get('improve'):
+                raise UserError('다듬기를 마친 뒤 다시 그려 주세요.')
+            ids = self.top_ids() if top else [c['id'] for c in sorted(self.combos, key=lambda c: -c['elo'])]
+            if not ids:
+                raise UserError('다시 그릴 조합이 없습니다.' if not top else '상위 30%에 든 조합이 아직 없습니다.')
+            settings = self._gen_settings()
+            self.save()
+
+        def work(job):
+            made = 0
+            for combo_id in ids:
+                if self.stop_event.is_set():
+                    break
+                combo = self.find(combo_id)
+                if not combo:  # deleted meanwhile
+                    continue
+                name = self._render(job, settings, combo['style'], settings['seed'])
+                with self.lock:
+                    job['done'] += 1
+                    if not name:
+                        continue
+                    made += 1
+                    old, combo['image_file'], combo['seed'] = combo.get('image_file'), name, settings['seed']
+                    if old not in {c.get('image_file') for c in self.combos + self.retired}:
+                        try:
+                            self._delete_images([old])
+                        except UserError:
+                            pass  # held open by a viewer: left behind, nothing points to it
+                    self.current = None  # the arena picks up the new pictures
+                    self.save()
+            with self.lock:
+                self._event('ok', f'조합 {made}개를 다시 그렸습니다.')
+
+        with self.lock:
+            self._start_job('redraw', '상위 30% 다시 그리기' if top else '전체 다시 그리기', len(ids), work)
+
     def start_free(self, prompt):
         with self.lock:
             settings = self._gen_settings()
@@ -1706,7 +1747,7 @@ class Engine:
             rated, waiting = self.ranking_counts()
             return {
                 'stage': self.stage(), 'job': self.job_view(), 'events': self.events_since(since),
-                'counts': {'active': len(self.combos), 'rated': rated, 'newcomers': waiting,
+                'counts': {'active': len(self.combos), 'top': len(self.top_ids()), 'rated': rated, 'newcomers': waiting,
                            'excluded': len(self.retired), 'artists': len(self.state['artists']),
                            'generation': self.selection['generation'],
                            # ponytail: walks the whole history each poll (~0.2 ms per 4,000 votes); a counter if it ever shows

@@ -591,6 +591,25 @@ def busy_starts():
         assert refuses(engine.start_custom, 'artist:a0, __random__', 0), 'count out of range'
         many = ', '.join(['__random__'] * (len(engine.state['artists']) + 1))
         assert refuses(engine.start_custom, many), 'more slots than artists'
+
+        # ---- redraw: every listed combo gets a new picture (the old file goes), ratings stay
+        if engine.state.get('improve'):
+            assert refuses(engine.start_redraw), 'not while refining'
+            engine.finish_improve()
+        top = set(engine.top_ids())
+        files = {c['id']: c['image_file'] for c in engine.combos}
+        engine.start_redraw(top=True)
+        wait_job(engine)
+        assert top and {c['id'] for c in engine.combos if c['image_file'] != files[c['id']]} == top
+        before = {c['id']: (c['image_file'], c['elo']) for c in engine.combos}
+        calls = len(fake.calls)
+        engine.start_redraw()
+        wait_job(engine)
+        assert len(fake.calls) - calls == len(before)
+        for c in engine.combos:
+            old, elo = before[c['id']]
+            assert c['image_file'] != old and c['elo'] == elo and (engine.img_dir / c['image_file']).exists()
+            assert not (engine.img_dir / old).exists()
     print('PASS: refused starts leave no state, refine follows the current champion, free results kept, custom combos.')
 
 

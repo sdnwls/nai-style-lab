@@ -140,6 +140,32 @@ function prompts() {
         icon('check'), '이대로 사용')));
 }
 
+// 다시 그리기: the listed combos (all, or the top 30%) drawn again with the prompts above (another character),
+// replacing their pictures. The export sits next to it: that zip is the only way back to the old pictures.
+function redraw() {
+  return section('refresh', 'sky', '다시 그리기', '바꾼 프롬프트, 시드로 조합을 다시 그려 그림을 바꿉니다. 순위는 그대로입니다.',
+    h('div', { class: 'row wrap' },
+      h('button', { class: 'btn', onclick: exportData }, icon('download'), '데이터 내보내기'),
+      h('span', { class: 'spacer' }),
+      h('button', { class: 'btn primary', onclick: () => startRedraw(true) }, icon('refresh'), '상위 30%'),
+      h('button', { class: 'btn primary', onclick: () => startRedraw(false) }, icon('refresh'), '전체')),
+    h('p', { class: 'note' }, '원래 그림은 지워지니, 되돌리려면 먼저 내보내 두세요.'));
+}
+
+async function startRedraw(top) {
+  await flush();  // what was just typed is what gets drawn
+  // One image per combo redrawn: say how many up front, against what the subscription has left when known.
+  const n = (top ? app.status?.counts?.top : app.status?.counts?.active) ?? 0;
+  const left = app.conf.subscription?.estimate?.left;
+  const what = top ? '상위 30% 조합' : '목록의 모든 조합';
+  const ok = await confirmDialog({ title: top ? '상위 30% 다시 그리기' : '전체 다시 그리기', ok: '다시 그리기', danger: true, text:
+    `⚠ 그림을 ${fmt(n)}장 새로 생성합니다${left != null ? ` (남은 예상 장수 ${fmt(left)}장)` : ''}. 조합이 많으면 시간과 생성량이 크게 듭니다.\n\n` +
+    `${what}을 바꾼 프롬프트, 시드로 다시 그리고, 원래 그림을 지웁니다. 순위는 그대로입니다.\n순위가 높은 조합부터 그리며, 중간에 멈추면 새 그림과 원래 그림이 섞입니다.\n` +
+    (top ? '나머지 조합은 원래 그림 그대로라, 대결에서 캐릭터가 다른 그림끼리 붙을 수 있습니다.\n' : '') +
+    '되돌리려면 먼저 데이터 내보내기를 해 두세요.' });
+  if (ok) await app.act(post('/api/generate/redraw', { top }), '다시 그리기를 시작했습니다.');
+}
+
 // 업데이트: this version, the newest release (checked at launch), and installing it. Installing downloads the
 // release, closes the app and starts the new version; data/ is never touched (a new data format is upgraded at its
 // first launch, the old file kept).
@@ -240,7 +266,7 @@ let tab = 'basic';
 function render() {
   const columns = (left, right) => h('div', { class: 'grid settings-columns', style: { alignItems: 'start' } },
     h('div', { class: 'stack', style: { gap: '16px' } }, left), h('div', { class: 'stack', style: { gap: '16px' } }, right));
-  const body = tab === 'prompts' ? named(prompts(), 'prompts')
+  const body = tab === 'prompts' ? h('div', { class: 'stack', style: { gap: '16px' } }, named(prompts(), 'prompts'), redraw())
     : tab === 'data' ? columns([update(), data()], resets())
     : columns([named(connection(), 'connection')], generation());
   morph(root,
