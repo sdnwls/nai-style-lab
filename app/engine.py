@@ -8,7 +8,6 @@ import collections
 import copy
 import io
 import json
-import math
 import random
 import shutil
 import threading
@@ -672,7 +671,8 @@ class Engine:
             return 'tie', tie[0], tie[1], {'inner': True}
         if mode != 'auto':
             return None
-        for chooser in (self._placement_pair, self._selection_pair, self._improve_pair):
+        # A refine is started by hand, so its matches come first: newcomers wait, they never block it.
+        for chooser in (self._improve_pair, self._placement_pair, self._selection_pair):
             pair = chooser()
             if pair:
                 return pair
@@ -1712,7 +1712,7 @@ class Engine:
         elif newcomers or rated < MIN_RATED_FOR_EVOLUTION:
             step = 4 if finals else 1  # the refined style finding its place in the ranking is still 완성
             if newcomers:
-                todo = (f'새 조합 {waiting}개의 자리를 찾아 주세요. 한 조합당 약 {max(1, math.ceil(math.log2(rated + 1)))}표면 됩니다.', 'arena', '대결하기')
+                todo = (f'새 조합 {waiting}개의 자리를 찾아 주세요.', 'arena', '대결하기')
             elif running:
                 todo = ('새 조합을 만드는 중입니다. 완성되는 대로 대결이 시작됩니다.', 'arena', '대결하기')
             else:

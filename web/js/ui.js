@@ -610,12 +610,12 @@ export function comboPreview(c, app) {
   // Keyed by the combo: showing another one brings a new panel (it fades in); the same one is updated in place.
   return h('aside', { class: 'detail fade-in', key: c.id },
     frame,
-    // One line, 다듬기 the main one. Deleting is in the selection bar and the Delete key. 다듬기 is off until the
-    // combo is ranked and while images are being made.
+    // One line, 다듬기 the main one. Deleting is in the selection bar and the Delete key. 다듬기 is off while
+    // images are being made; an unranked combo can be refined (a favorite picked by eye among new ones).
     h('div', { class: 'preview-actions' },
       c.excluded
         ? h('button', { class: 'btn sm', onclick: () => reviveCombos(app, [c.id]) }, icon('refresh'), '부활')
-        : h('button', { class: 'btn primary sm', disabled: !c.rated || running, onclick: () => startRefine(app, c) }, icon('wand'), '다듬기'),
+        : h('button', { class: 'btn primary sm', disabled: running, onclick: () => startRefine(app, c) }, icon('wand'), '다듬기'),
       h('button', { class: 'btn sm', onclick: () => editElo(app, [c.id], c.elo) }, icon('pen'), 'Elo 수정'),
       h('button', { class: 'btn sm', onclick: () => openOriginal(c) }, icon('external'), '원본')),
     // Tier and record on one line (the Elo is changed with Elo 수정 above).

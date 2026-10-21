@@ -197,6 +197,10 @@ def main():
             variant = core.parse_style_combo(imp['items'][key]['style'])
             assert [t for _, t in variant] == [t for _, t in base_pairs], 'same artists, only weights move'
             assert all(abs(w - bw) <= 0.3 + 1e-9 for (w, _), (bw, _) in zip(variant, base_pairs))
+        newcomer = {**base, 'id': 'newcomer', 'placed': False, 'matches': 0}
+        engine.combos.append(newcomer)
+        assert engine.match()['kind'] == 'improve', 'a refine goes before newcomers waiting for their place'
+        engine.combos.remove(newcomer)
         m = engine.match()
         assert m['kind'] == 'improve' and {m['a']['role'], m['b']['role']} == {'챔피언', '변형'}
         challenger = imp['pending'][0]
