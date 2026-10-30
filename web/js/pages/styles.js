@@ -4,7 +4,7 @@ import { h, morph, icon, toast, pickSelect, selectionKeys, arrowTarget, pageHead
   confirmDialog, fmt, emptyState, galleryList, galleryToolbar } from '../ui.js';
 
 let root, app, data = { active: [], excluded: [] }, barHost = null;
-const view = { tiers: new Set(), sort: 'elo-desc', selected: new Set(), focus: null, anchor: null };
+const view = { tiers: new Set(), sort: 'elo-desc', q: '', selected: new Set(), focus: null, anchor: null };
 
 function all() {
   return [...data.active, ...data.excluded];

@@ -243,6 +243,21 @@ export function promptDialog({ title, text, value = '', ok = '저장', type = 't
   });
 }
 
+// Two number boxes, min - max: [min, max] as typed (either may be empty), or null when cancelled.
+export function rangeDialog({ title, text, low = '', high = '', ok = '저장', attrs = {} }) {
+  return modal((dialog, done) => {
+    const submit = () => done([min.value.trim(), max.value.trim()]);
+    const box = (value, placeholder) => h('input', { class: 'input num', type: 'number', ...attrs, value: String(value), placeholder,
+      onkeydown: (e) => { if (e.key === 'Enter') submit(); } });
+    const min = box(low, '최소'), max = box(high, '최대');
+    dialog.append(h('h3', {}, title), text ? h('p', {}, text) : null, h('div', { class: 'range-pair' }, min, h('span', {}, '-'), max),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn ghost', onclick: () => done(null) }, '취소'),
+        h('button', { class: 'btn primary', onclick: submit }, ok)));
+    setTimeout(() => min.select(), 0);
+  });
+}
+
 // ---------------------------------------------------------------- prompt viewer
 // What NovelAI writes into its PNGs: tEXt chunks, "Comment" holding the request as JSON and "Source" the model.
 // Null for anything else (another kind of file, or a picture whose metadata a site stripped).
@@ -561,7 +576,7 @@ export function arrowTarget(event, currentId) {
   return next.dataset.key;
 }
 
-// Sort and tier filters for the 그림체 gallery. view holds { tiers: Set, sort }.
+// Sort, artist search and tier filters for the 그림체 gallery. view holds { tiers: Set, sort, q }.
 const SORTS = [['elo-desc', 'Elo 높은 순'], ['elo-asc', 'Elo 낮은 순'], ['created-desc', '최근 생성 순'], ['created-asc', '오래된 생성 순']];
 
 // What the gallery shows: the active combos and the archive (탈락 / 제외), sorted and filtered.
@@ -571,6 +586,9 @@ export function galleryList(active, excluded, view) {
   if (view.tiers.size) {
     list = list.filter((c) => !c.excluded && (view.tiers.has(c.tier) || (view.tiers.has('new') && (!c.rated || c.child))));
   }
+  // Artist search: comma-separated names, a combo must have them all; typed as on the site ("shigure ui") or as tags.
+  const terms = (view.q || '').toLowerCase().split(',').map((t) => t.trim().replace(/^artist:/, '').replace(/ /g, '_')).filter(Boolean);
+  if (terms.length) list = list.filter((c) => terms.every((t) => c.pairs.some((p) => p.tag.toLowerCase().includes(t))));
   const [key, dir] = view.sort.split('-');
   const value = (c) => c[key];
   // By Elo the archive goes last (its Elo no longer counts); by creation time it falls where it was made.
@@ -589,6 +607,8 @@ export function galleryToolbar(view, onChange) {
   return h('div', { class: 'toolbar', style: { marginBottom: '14px' } },  // wraps to a second row on a narrow window
     h('select', { class: 'select', style: { width: '120px', flex: 'none' }, 'aria-label': '정렬', onchange: (e) => { view.sort = e.currentTarget.value; onChange(); } },
       SORTS.map(([key, label]) => h('option', { value: key, selected: view.sort === key }, label))),
+    h('label', { class: 'search' }, icon('search'), h('input', { class: 'input', type: 'search', placeholder: '작가 검색 (쉼표로 여러 명)', value: view.q || '',
+      oninput: (e) => { view.q = e.currentTarget.value; onChange(); } })),
     h('div', { class: 'row', style: { gap: '6px' } },
       chip(!view.tiers.size, () => { view.tiers.clear(); onChange(); }, '전체'),
       filters.map(([key, label]) => chip(view.tiers.has(key), () => toggle(key), label, TIERS.includes(key) ? key : null))));

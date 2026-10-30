@@ -1,6 +1,6 @@
 // 작가 · 조합 만들기 — register artists, then roll random combos that will find their place in the arena.
 import { get, post } from '../api.js';
-import { h, morph, limits, icon, toast, fmt, confirmDialog, promptDialog, shortTag, pickSelect, selectionKeys, pageHead, card } from '../ui.js';
+import { h, morph, limits, icon, toast, fmt, confirmDialog, promptDialog, rangeDialog, shortTag, pickSelect, selectionKeys, pageHead, card } from '../ui.js';
 
 let root, app, artists = [];
 // addText / customText / countDraft: what is typed in the artist and combo boxes and "만들 개수" (the count until a start saves it).
@@ -29,11 +29,12 @@ function artistTable() {
   };
   return h('div', { class: 'table-wrap', style: { maxHeight: '100%' } },
     h('table', { class: 'data artists' },
-      h('thead', {}, h('tr', {}, head('order', '#', true), head('tag', '작가'), head('score', '점수', true), head('count', '사용', true), head('winrate', '승률', true))),
+      h('thead', {}, h('tr', {}, head('order', '#', true), head('tag', '작가'), head('score', '점수', true), head('count', '사용', true), head('winrate', '승률', true), h('th', { class: 'num' }, '가중치'))),
       h('tbody', {}, list.map((a) => h('tr', { key: a.tag, class: view.selected.has(a.tag) ? 'selected' : '', onclick: (e) => pick(a, e) },
         h('td', { class: 'num' }, fmt(a.order)), h('td', {}, shortTag(a.tag)), h('td', { class: 'num' },
           a.combos ? `${a.score > 0 ? '+' : ''}${fmt(a.score)}` : '–'), h('td', { class: 'num' }, fmt(a.count)),
-        h('td', { class: 'num' }, a.arena_matches ? `${Math.round(a.winrate * 100)}%` : '–'))))));
+        h('td', { class: 'num' }, a.arena_matches ? `${Math.round(a.winrate * 100)}%` : '–'),
+        h('td', { class: 'num', title: a.min_w == null ? '공통 범위' : '이 작가만의 범위' }, a.min_w == null ? '–' : `${a.min_w} - ${a.max_w}`))))));
 }
 
 function tableBar() {
@@ -42,6 +43,7 @@ function tableBar() {
     h('span', { class: 'spacer' }),
     // Renaming is for one artist: its button shows next to delete while exactly one is selected.
     view.selected.size === 1 ? h('button', { class: 'btn sm', onclick: () => rename([...view.selected][0]) }, icon('pen'), '이름 바꾸기') : null,
+    view.selected.size ? h('button', { class: 'btn sm', onclick: () => editWeights([...view.selected]) }, icon('sliders'), '가중치 범위') : null,
     view.selected.size ? h('button', { class: 'btn danger sm', onclick: removeSelected }, icon('trash'), `${view.selected.size}명 삭제`) : null);
 }
 
@@ -80,7 +82,7 @@ function render() {
         h('div', { class: 'row' }, h('span', { class: 'field-label' }, '만들 개수'), count, h('span', { class: 'spacer' }),
           h('button', { class: 'btn primary lg', disabled: working, onclick: () => generate(Number(view.countDraft ?? settings.gen_count)) }, icon('zap'), working ? '생성 중…' : '만들기')),
         h('p', { class: 'note' },
-          '작가 수와 가중치 범위는 진화와 다듬기에도 그대로 적용됩니다.')),
+          '작가 수와 가중치 범위는 진화와 다듬기에도 그대로 적용됩니다. 작가별 가중치 범위를 정한 작가는 그 범위를 씁니다.')),
       card({ icon: 'pen', tone: 'mint', title: '특정 조합 만들기', desc: '적은 작가와 가중치 그대로 조합을 만들고, 바로 그림을 생성합니다.' },
         h('textarea', { class: 'textarea', rows: 3, value: view.customText, oninput: (e) => { view.customText = e.currentTarget.value; },
           placeholder: '1.2::artist:rurudo ::, __random__, __random__\n__random__: 등록된 작가 중 무작위' }),
@@ -145,6 +147,20 @@ async function rename(tag) {
   if (value == null || value.trim().replace(/^artist:/, '') === name) return;
   await app.act(post('/api/artists/rename', { old: tag, new: value }), '이름을 바꿨습니다.');
   view.selected.clear();
+  render();
+}
+
+// An artist's own weight range replaces the common one for it; both boxes empty go back to the common one.
+async function editWeights(tags) {
+  const own = tags.length === 1 ? artists.find((a) => a.tag === tags[0] && a.min_w != null) : null;
+  const range = await rangeDialog({ title: tags.length > 1 ? `작가 ${tags.length}명 가중치 범위` : `${shortTag(tags[0])} 가중치 범위`,
+    text: '이 작가는 공통 범위 대신 이 범위에서 가중치를 뽑습니다. 두 칸을 비우면 공통 범위로 돌아갑니다.',
+    low: own?.min_w ?? '', high: own?.max_w ?? '', attrs: { step: 0.1, ...limits('global_min_w') } });
+  if (range == null) return;
+  const clear = range.every((v) => v === '');
+  if (!clear && range.some((v) => v === '')) return toast('최소와 최대를 모두 입력해 주세요.', 'warn');
+  await app.act(post('/api/artists/weights', { tags, min: clear ? null : Number(range[0]), max: clear ? null : Number(range[1]) }),
+    clear ? '공통 범위로 되돌렸습니다.' : '가중치 범위를 저장했습니다.');
   render();
 }
 

@@ -45,7 +45,7 @@ def make_engine(tmp, artists=12):
     engine = Engine(Path(tmp), generate=fake)
     engine.state['artists'] = [{'tag': f'artist:a{i}', 'count': 0, 'arena_matches': 0, 'arena_wins': 0}
                                for i in range(artists)]
-    engine.update_settings({'api_key': 'test-key', 'delay': 0, 'gen_min': 3, 'gen_max': 5,
+    engine.update_settings({'api_key': 'test-key', 'delay': 0, 'delay_max': 0, 'gen_min': 3, 'gen_max': 5,
                             'global_min_w': 0.5, 'global_max_w': 1.5})
     return engine, fake
 
@@ -250,6 +250,11 @@ def main():
         engine.start_random(5)
         wait_job(engine)
         assert len(fake.calls) - calls_before == 1 and engine.job['failures'] == 1, 'auth failure stops after one try'
+        fake.fail_status = 403
+        engine.start_random(5)
+        wait_job(engine)
+        assert len(fake.calls) - calls_before == 2, 'a refusal (403) stops after one try too'
+        assert any('(403)' in e['text'] for e in engine.events) and engine.events[-1]['text'].count('API 키') == 0
         fake.fail_status = None
 
         # ---- 9. persistence: everything survives a restart
@@ -363,6 +368,17 @@ def guards():
         wait_job(engine)
         assert len(pauses) == 2, 'three images, two waits: none before the first or after the last'
         del engine._pause
+        waits = []
+        engine.stop_event = type('E', (), {'wait': lambda self, t: waits.append(t), 'is_set': lambda self: False})()
+        for _ in range(50):
+            engine._pause({'delay': 3.0, 'delay_max': 5.0})
+        engine.stop_event = threading.Event()
+        assert all(3.0 <= w <= 5.0 for w in waits) and len(set(waits)) > 1, 'a random wait within the range'
+        assert refuses(lambda: engine.update_settings({'delay': 4, 'delay_max': 2})), 'min above max is refused'
+        engine.state['ui_state'].pop('delay_max')
+        engine.state['ui_state']['delay'] = 10.0  # saved before the range: above the default maximum
+        assert engine.settings()['delay_max'] == 10.0
+        engine.update_settings({'delay': 0, 'delay_max': 0})
         assert all(set(c) >= {'placed', 'created', 'seed'} for c in engine.combos)
 
         # ---- a free prompt with no artist tags leaves no stray comma where {artist} was
@@ -624,7 +640,7 @@ def auto_subscription():
         engine = Engine(Path(tmp), generate=FakeNai(), fetch_subscription=lambda key: checks.append(key) or
                         {'tier': 'Opus', 'tier_num': 3, 'unlimited': True, 'active': True, 'remaining_percent': 80, 'anlas': 0},
                         auto_subscription=True)
-        engine.update_settings({'api_key': 'k', 'delay': 0})
+        engine.update_settings({'api_key': 'k', 'delay': 0, 'delay_max': 0})
         engine.start_free('x')
         wait_job(engine)
         for _ in range(200):
@@ -640,8 +656,35 @@ def auto_subscription():
     print('PASS: subscription checked around runs.')
 
 
+def artist_weights():
+    """An artist's own weight range replaces the common one in every combo drawn; clearing it goes back."""
+    with tempfile.TemporaryDirectory() as tmp:
+        engine, fake = make_engine(tmp, artists=6)
+        engine.set_artist_weights(['artist:a0', 'artist:a1'], 0.2, 0.3)
+        for bad in ((0.5, 0.4), (0, 1), (1, 9), ('x', 1), (1, None)):
+            try:
+                engine.set_artist_weights(['artist:a2'], *bad)
+                raise AssertionError(bad)
+            except UserError:
+                pass
+        assert 'min_w' not in engine.state['artists'][2]
+        engine.update_settings({'gen_min': 5, 'gen_max': 6})  # a0/a1 in nearly every combo
+        engine.start_random(10)
+        wait_job(engine)
+        engine.start_custom('__random__, __random__, __random__, __random__, __random__', 5)
+        wait_job(engine)
+        pairs = [p for c in fake.calls for p in core.parse_style_combo(c['style'])]
+        own = [w for w, t in pairs if t in ('artist:a0', 'artist:a1')]
+        assert own and all(0.2 <= w <= 0.3 for w in own), own
+        assert all(0.5 <= w <= 1.5 for w, t in pairs if t not in ('artist:a0', 'artist:a1'))
+        engine.set_artist_weights(['artist:a0'])
+        assert 'min_w' not in engine.state['artists'][0] and engine._weight_ranges() == {'artist:a1': (0.2, 0.3)}
+    print('PASS: per-artist weight ranges.')
+
+
 if __name__ == '__main__':
     main()
     guards()
     busy_starts()
     auto_subscription()
+    artist_weights()

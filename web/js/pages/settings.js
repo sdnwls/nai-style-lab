@@ -107,10 +107,13 @@ function generation() {
       field('Steps', number('steps'), '28 이하가 무제한 범위입니다.'),
       field('CFG (Scale)', number('cfg', { step: 0.1 })),
       field('CFG Rescale', number('cfg_rescale', { step: 0.05 })),
-      field('생성 간 대기 (초)', number('delay', { step: 0.5 })),
+      field('생성 간 대기 (초)', h('div', { class: 'range-pair' }, number('delay', { step: 0.5 }), h('span', {}, '-'), number('delay_max', { step: 0.5 }))),
       h('div', { class: 'field', style: { gridColumn: 'span 2' } }, h('label', {}, '시드'),
         h('div', { class: 'input-group' }, seed,
-          h('button', { class: 'btn', onclick: () => { save('seed', String(Math.floor(Math.random() * meta.max_seed))); render(); } }, icon('refresh'), '무작위')))));
+          h('button', { class: 'btn', onclick: () => { save('seed', String(Math.floor(Math.random() * meta.max_seed))); render(); } }, icon('refresh'), '무작위'))),
+      // Under the delay and seed row, across both: one line instead of wrapping in the delay's column.
+      h('div', { class: 'field', style: { gridColumn: '1 / -1', marginTop: '-10px' } },
+        h('div', { class: 'help' }, 'NovelAI는 짧은 시간에 많은 이미지를 자동으로 생성하는 계정을 제한할 수 있습니다 (403).'))));
 }
 
 function prompts() {

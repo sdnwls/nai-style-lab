@@ -41,6 +41,15 @@ def main():
             assert all(abs(w - bw) <= jitter + 1e-9 and 0.5 <= w <= 1.5 for (w, _), (bw, _) in zip(moved, base))
     assert core.jitter_weights([(1.5, 'artist:a')], 0.01, 0.5, 1.5) == [(1.4, 'artist:a')], 'tiny jitter still moves a visible step'
 
+    # ---- an artist's own weight range replaces the common one, wider or narrower, in breeding and jitter
+    own = {'artist:0': (0.2, 0.4), 'artist:1': (2.0, 2.5)}
+    for _ in range(300):
+        for mode in core.BREED_MODES:
+            pairs = core.parse_style_combo(core.breed_weighted_style(wide, narrow, artists, 4, 8, 0.5, 1.5, mode, ranges=own))
+            assert all(own.get(t, (0.5, 1.5))[0] <= w <= own.get(t, (0.5, 1.5))[1] for w, t in pairs), (mode, pairs)
+        moved = core.jitter_weights([(1.0, 'artist:0'), (1.0, 'artist:1'), (1.0, 'artist:2')], 0.3, 0.5, 1.5, ranges=own)
+        assert moved[0][0] <= 0.4 and moved[1][0] >= 2.0 and 0.7 <= moved[2][0] <= 1.3, moved
+
     # ---- newcomer placement: exact slot on a 100-rung ladder in at most ceil(log2(101)) votes
     ladder = list(range(100))
     for truth in (0, 1, 37, 50, 99, 100):

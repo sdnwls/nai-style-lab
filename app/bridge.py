@@ -123,6 +123,7 @@ class App:
             '/api/artists/scan': lambda: e.scan_artists(body.get('text', '')),
             '/api/artists/rename': lambda: e.rename_artist(body.get('old'), body.get('new')),
             '/api/artists/delete': lambda: e.delete_artists(body.get('tags', [])),
+            '/api/artists/weights': lambda: e.set_artist_weights(body.get('tags', []), body.get('min'), body.get('max')),
             '/api/generate/random': lambda: e.start_random(body.get('count')),
             '/api/generate/custom': lambda: e.start_custom(body.get('text', ''), body.get('count', 1)),
             '/api/generate/free': lambda: e.start_free(body.get('prompt', '')),

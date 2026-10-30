@@ -34,7 +34,7 @@ DRAW_TRIES = 30  # draws to find a style not made before, per image (random comb
 
 SETTING_DEFAULTS = {
     'model': core.MODELS[0], 'size': list(core.SIZE_PRESETS)[0], 'sampler': core.SAMPLERS[0],
-    'steps': 28, 'cfg': 5.0, 'cfg_rescale': 0.0, 'delay': 1.0, 'seed': '',
+    'steps': 28, 'cfg': 5.0, 'cfg_rescale': 0.0, 'delay': 3.0, 'delay_max': 5.0, 'seed': '',
     'global_min_w': 0.8, 'global_max_w': 1.8, 'gen_min': 4, 'gen_max': 8,
     'gen_count': 50, 'evo_count': 20, 'improve_variants': 4,
     'base_prompt': core.DEFAULT_BASE_PROMPT, 'character_prompt': [], 'negative': core.DEFAULT_NEGATIVE,
@@ -47,7 +47,7 @@ SETTING_TYPES = {key: type(value) for key, value in SETTING_DEFAULTS.items()}
 # Same limits as the settings screen: (label, low, high).
 SETTING_RANGES = {
     'steps': ('Steps', 1, 50), 'cfg': ('CFG', 0, 20), 'cfg_rescale': ('CFG Rescale', 0, 1),
-    'delay': ('생성 간 대기', 0, 30), 'global_min_w': ('최소 가중치', 0.1, 3), 'global_max_w': ('최대 가중치', 0.1, 3),
+    'delay': ('생성 간 최소 대기', 0, 30), 'delay_max': ('생성 간 최대 대기', 0, 30), 'global_min_w': ('최소 가중치', 0.1, 3), 'global_max_w': ('최대 가중치', 0.1, 3),
     'gen_min': ('조합당 최소 작가 수', 1, 20), 'gen_max': ('조합당 최대 작가 수', 1, 20),
     'gen_count': ('무작위 조합 기본 개수', 1, 200), 'evo_count': ('진화 조합 수', 1, 60),
     'improve_variants': ('다듬기 라운드당 변형', 2, 12),
@@ -141,6 +141,8 @@ class Engine:
         for key, choices in SETTING_CHOICES.items():
             if s[key] not in choices:  # a choice a later release dropped (the 960x1088 size): back to the default
                 s[key] = SETTING_DEFAULTS[key]
+        if s['delay_max'] < s['delay']:  # a delay saved before it became a range, above the default maximum
+            s['delay_max'] = s['delay']
         return s
 
     def update_settings(self, changes: dict):
@@ -197,6 +199,8 @@ class Engine:
         s = self.settings()
         if s['gen_max'] < s['gen_min']:
             raise UserError('조합당 작가 수 범위를 확인해 주세요 (최소 ≤ 최대).')
+        if 'delay_max' in ui and ui['delay_max'] < s['delay']:
+            raise UserError('생성 간 대기 범위를 확인해 주세요 (최소 ≤ 최대).')
         if not s['global_min_w'] < s['global_max_w']:
             raise UserError('가중치 범위를 확인해 주세요 (최소 < 최대).')
         return api_key
@@ -224,7 +228,7 @@ class Engine:
             self._event('info', f"시드를 {s['seed']}(으)로 정했습니다. 앞으로 모든 그림이 이 시드로 생성됩니다.")
         width, height = core.SIZE_PRESETS[s['size']]
         return dict(api_key=self.api_key, model=s['model'], width=width, height=height, steps=s['steps'],
-                    cfg=s['cfg'], cfg_rescale=s['cfg_rescale'], sampler=s['sampler'], delay=s['delay'],
+                    cfg=s['cfg'], cfg_rescale=s['cfg_rescale'], sampler=s['sampler'], delay=s['delay'], delay_max=s['delay_max'],
                     base_prompt=s['base_prompt'], character_prompt=s['character_prompt'],
                     character_negative=s['character_negative'],
                     negative=s['negative'], seed=int(s['seed']))
@@ -364,7 +368,7 @@ class Engine:
     def _render(self, job, settings, style, seed):
         """Generate one image outside the lock; returns the saved file name or None on failure (or a stop).
 
-        The set delay goes between a job's images: never before its first one or after its last.
+        The set delay (a random time in its range) goes between a job's images: never before its first one or after its last.
         """
         if job['renders']:
             self._pause(settings)
@@ -379,7 +383,10 @@ class Engine:
                 job['failures'] += 1
                 self._event('error', f'이미지를 만들지 못했습니다: {exc}')
                 job['streak'] += 1
-                if getattr(exc, 'status', None) in core.AUTH_ERROR_STATUSES:
+                if getattr(exc, 'status', None) == 403:  # also what an account limited for generating too much gets
+                    self._event('error', 'NovelAI가 요청을 거부했습니다 (403).')
+                    self.stop_event.set()
+                elif getattr(exc, 'status', None) in core.AUTH_ERROR_STATUSES:
                     self._event('error', 'API 키 인증에 실패해 작업을 멈췄습니다. 설정에서 키를 확인해 주세요.')
                     self.stop_event.set()
                 elif job['streak'] >= MAX_FAILURE_STREAK and not self.stop_event.is_set():
@@ -425,8 +432,8 @@ class Engine:
                 'generation': self.selection['generation'], **fields}
 
     def _pause(self, settings):
-        if settings['delay'] > 0:
-            self.stop_event.wait(settings['delay'])
+        if settings['delay_max'] > 0:
+            self.stop_event.wait(random.uniform(settings['delay'], settings['delay_max']))
 
     def _after_job(self, kind):
         if kind == 'improve':
@@ -441,14 +448,15 @@ class Engine:
             if len(tags) < s['gen_min']:
                 raise UserError(f"작가를 최소 {s['gen_min']}명 이상 등록해 주세요.")
             settings = self._gen_settings()
+            ranges = self._weight_ranges()
             seen = {c['style'] for c in self.combos + self.retired}
             self.save()
 
         def draw():
             size = random.randint(s['gen_min'], min(s['gen_max'], len(tags)))
             picked = random.sample(tags, size)
-            weights = [core.clamp_weight(random.uniform(s['global_min_w'], s['global_max_w']),
-                                         s['global_min_w'], s['global_max_w']) for _ in picked]
+            weights = [core.random_weight(*core.weight_range(t, ranges, s['global_min_w'], s['global_max_w']))
+                       for t in picked]
             return core.style_from_pairs(list(zip(weights, picked))), set(picked)
 
         def keep(style, name, used):
@@ -491,12 +499,13 @@ class Engine:
             if not slots and core.style_from_pairs(fixed) in seen:
                 raise UserError('이미 그림체 목록에 있는 조합입니다.')
             settings = self._gen_settings()
+            ranges = self._weight_ranges()
             self.save()
-        low, high = s['global_min_w'], s['global_max_w']
 
         def draw():
             picked = random.sample(pool, len(slots))
-            weights = [core.clamp_weight(random.uniform(low, high), low, high) if w is None else w for w in slots]
+            weights = [core.random_weight(*core.weight_range(t, ranges, s['global_min_w'], s['global_max_w']))
+                       if w is None else w for w, t in zip(slots, picked)]
             pairs = fixed + list(zip(weights, picked))
             return core.style_from_pairs(pairs), {t for _, t in pairs}
 
@@ -629,6 +638,31 @@ class Engine:
                 combo['style'] = core.rename_artist_in_style(combo['style'], old, new)
             self._artists_checked()
             self.save()
+
+    def set_artist_weights(self, tags, low=None, high=None):
+        """Give ``tags`` their own weight range (it replaces the common one for them), or none with low/high None."""
+        if low is None and high is None:
+            limits = None
+        else:
+            label, lo, hi = SETTING_RANGES['global_min_w']
+            try:
+                limits = (round(float(low), 1), round(float(high), 1))
+            except (TypeError, ValueError):
+                raise UserError('가중치 범위를 숫자로 입력해 주세요.')
+            if not lo <= limits[0] <= limits[1] <= hi:  # also refuses NaN
+                raise UserError(f'가중치 범위는 {lo} ~ {hi} 사이, 최소가 최대 이하로 입력해 주세요.')
+        with self.lock:
+            tags = set(tags)
+            for artist in self.state['artists']:
+                if artist['tag'] in tags:
+                    artist.pop('min_w', None), artist.pop('max_w', None)
+                    if limits:
+                        artist['min_w'], artist['max_w'] = limits
+            self.save()
+
+    def _weight_ranges(self):
+        """{tag: (min, max)} of the artists with their own weight range; the others draw from the common one."""
+        return {a['tag']: (a['min_w'], a['max_w']) for a in self.state['artists'] if 'min_w' in a}
 
     def _artists_checked(self):
         """Editing the artist list is checking it (the setup step starts from the default list)."""
@@ -1057,13 +1091,14 @@ class Engine:
             preference = core.artist_preference(scores, artist_tags)
             ranked = core.rank_order(parents)
             seen = {c['style'] for c in self.combos + self.retired}
+            ranges = self._weight_ranges()
 
         def draw():
             p_a, p_b = core.pick_parents(ranked)
             mode = random.choices(core.BREED_MODES, weights=core.BREED_WEIGHTS)[0]
             return core.breed_weighted_style(p_a['style'], p_b['style'], artist_tags, s['gen_min'], s['gen_max'],
                                              s['global_min_w'], s['global_max_w'], mode, parent_counts,
-                                             preference), None
+                                             preference, ranges), None
 
         def keep(style, name, _):
             combo = self._new_combo(style, name, settings)  # generation: the evolution tab's
@@ -1222,6 +1257,7 @@ class Engine:
 
     def _improve_generate(self, settings, count):
         s = self.settings()
+        ranges = self._weight_ranges()
         settings = {**settings, 'seed': self.state['improve']['seed']}
 
         def work(job):
@@ -1232,7 +1268,7 @@ class Engine:
                 # The champion as it is now: a variant that wins mid-round is what the rest of the round varies.
                 with self.lock:
                     pairs = core.parse_style_combo(self.find_any(imp['champion_id'])['style'])
-                return core.style_from_pairs(core.jitter_weights(pairs, imp['jitter'], s['global_min_w'], s['global_max_w'])), None
+                return core.style_from_pairs(core.jitter_weights(pairs, imp['jitter'], s['global_min_w'], s['global_max_w'], ranges=ranges)), None
 
             def keep(style, name, _):
                 champion = self.find_any(imp['champion_id'])

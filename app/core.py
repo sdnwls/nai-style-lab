@@ -109,7 +109,7 @@ def fetch_user_data(api_key: str):
             reason = {
                 400: '요청이 거부되었습니다. API 주소와 키를 확인해 주세요.',
                 401: 'API 키가 만료되었거나 올바르지 않습니다.',
-                403: '구독 정보에 접근할 권한이 없습니다.',
+                403: 'NovelAI가 요청을 거부했습니다.',
                 429: '요청이 너무 많습니다. 잠시 후 다시 조회해 주세요.',
             }.get(resp.status, 'NovelAI 서버가 요청을 처리하지 못했습니다.')
             raise RuntimeError(f'HTTP {resp.status}: {reason}')
@@ -441,6 +441,15 @@ def clamp_weight(weight: float, min_w: float, max_w: float) -> float:
     return min(high, max(low, round(weight, 1)))
 
 
+def weight_range(tag, ranges, min_w, max_w):
+    """The artist's own weight range from ``ranges`` ({tag: (min, max)}), else the common one: it replaces it."""
+    return (ranges or {}).get(tag, (min_w, max_w))
+
+
+def random_weight(low, high):
+    return clamp_weight(random.uniform(low, high), low, high)
+
+
 BREED_MODES = ('mutate', 'crossover', 'random')
 BREED_WEIGHTS = (1, 1, 1)  # a third each: crossover mixes lineages, random keeps looking elsewhere
 FAVOURITE_BOOST = 2        # the best-scoring artist is drawn this many times as often as an average one
@@ -470,7 +479,7 @@ def pick_parents(ranked):
 
 
 def breed_weighted_style(style_a, style_b, artist_tags, min_tags, max_tags,
-                         min_w, max_w, mode='mutate', parent_counts=None, preference=None):
+                         min_w, max_w, mode='mutate', parent_counts=None, preference=None, ranges=None):
     """Create a child that always stays inside the configured artist count and weight range.
 
     mutate: parent A with 1-3 artists replaced/removed/added and inherited weights moved by up to
@@ -478,7 +487,7 @@ def breed_weighted_style(style_a, style_b, artist_tags, min_tags, max_tags,
     Newly drawn artists favour those that few current parents use (``parent_counts``), so one
     popular artist does not take over every lineage, times the user's taste (``preference``,
     from artist_preference). Inherited weights and artist counts outside
-    the current settings are pulled back inside them.
+    the current settings are pulled back inside them; an artist in ``ranges`` keeps to its own weight range.
     """
     first, second = parse_style_combo(style_a), parse_style_combo(style_b)
     if not first or not second or len(artist_tags) < min_tags:
@@ -487,8 +496,11 @@ def breed_weighted_style(style_a, style_b, artist_tags, min_tags, max_tags,
     counts = parent_counts or {}
     liked = preference or {}
 
-    def clamp(weight):
-        return clamp_weight(weight, min_w, max_w)
+    def clamp(weight, tag):
+        return clamp_weight(weight, *weight_range(tag, ranges, min_w, max_w))
+
+    def draw(tag):
+        return random_weight(*weight_range(tag, ranges, min_w, max_w))
 
     def fresh(used):
         pool = [tag for tag in artist_tags if tag not in used]
@@ -499,11 +511,11 @@ def breed_weighted_style(style_a, style_b, artist_tags, min_tags, max_tags,
     elif mode == 'crossover':
         inherited = {tag: weight for weight, tag in first}
         inherited.update({tag: weight for weight, tag in second if tag not in inherited})
-        pairs = [(clamp(weight), tag) for tag, weight in inherited.items()]
+        pairs = [(clamp(weight, tag), tag) for tag, weight in inherited.items()]
         random.shuffle(pairs)
         pairs = pairs[:random.randint(min_tags, max_tags)]
     else:
-        pairs = [(clamp(weight + random.uniform(-MUTATE_WEIGHT_JITTER, MUTATE_WEIGHT_JITTER)), tag)
+        pairs = [(clamp(weight + random.uniform(-MUTATE_WEIGHT_JITTER, MUTATE_WEIGHT_JITTER), tag), tag)
                  for weight, tag in first]
         random.shuffle(pairs)
         pairs = pairs[:max_tags]
@@ -516,17 +528,19 @@ def breed_weighted_style(style_a, style_b, artist_tags, min_tags, max_tags,
                 break
             action = random.choice(actions)
             if action == 'replace':
-                pairs[random.randrange(len(pairs))] = (clamp(random.uniform(min_w, max_w)), fresh(used))
+                tag = fresh(used)
+                pairs[random.randrange(len(pairs))] = (draw(tag), tag)
             elif action == 'remove':
                 pairs.pop(random.randrange(len(pairs)))
             else:
-                pairs.append((clamp(random.uniform(min_w, max_w)), fresh(used)))
+                tag = fresh(used)
+                pairs.append((draw(tag), tag))
     target = random.randint(min_tags, max_tags) if mode == 'random' else min_tags
     used = {tag for _, tag in pairs}
     while len(pairs) < target:
         tag = fresh(used)
         used.add(tag)
-        pairs.append((clamp(random.uniform(min_w, max_w)), tag))
+        pairs.append((draw(tag), tag))
     return style_from_pairs(pairs)
 
 
@@ -878,17 +892,20 @@ def artist_scores(combos, sweeps=60):
 
 # ---------------------------------------------------------------- improve workbench
 
-def jitter_weights(pairs, jitter, min_w, max_w, tries=50):
-    """Same artists, new weights: every weight moves by up to ±jitter (at least one changes)."""
+def jitter_weights(pairs, jitter, min_w, max_w, tries=50, ranges=None):
+    """Same artists, new weights: every weight moves by up to ±jitter (at least one changes), each within its
+    artist's own range from ``ranges`` or the common one."""
+    def clamp(weight, tag):
+        return clamp_weight(weight, *weight_range(tag, ranges, min_w, max_w))
+
     for _ in range(tries):
-        moved = [(clamp_weight(weight + random.uniform(-jitter, jitter), min_w, max_w), tag)
-                 for weight, tag in pairs]
+        moved = [(clamp(weight + random.uniform(-jitter, jitter), tag), tag) for weight, tag in pairs]
         if any(new != old for (new, _), (old, _) in zip(moved, pairs)):
             return moved
     index = random.randrange(len(pairs))  # tiny jitter / narrow range: force one visible step
     weight, tag = pairs[index]
-    step = 0.1 if clamp_weight(weight + 0.1, min_w, max_w) != weight else -0.1
-    return pairs[:index] + [(clamp_weight(weight + step, min_w, max_w), tag)] + pairs[index + 1:]
+    step = 0.1 if clamp(weight + 0.1, tag) != weight else -0.1
+    return pairs[:index] + [(clamp(weight + step, tag), tag)] + pairs[index + 1:]
 
 
 # ---------------------------------------------------------------- storage
