@@ -12,6 +12,7 @@ import random
 import shutil
 import threading
 import time
+import traceback
 import uuid
 import zipfile
 import zlib
@@ -91,6 +92,7 @@ class Engine:
         self.key_file = self.data_dir / 'api_key.txt'
         self.img_dir.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        self.log = lambda text: None  # main.py points it at the app's log
         # Injected for tests; the real ones call NovelAI.
         self._generate = generate or core.generate_for_settings
         self._fetch_subscription = fetch_subscription or core.fetch_user_data
@@ -351,6 +353,7 @@ class Engine:
             try:
                 work(job)
             except Exception as exc:  # a crashed job must still end cleanly
+                self.log(f'{label} crashed\n{traceback.format_exc()}')
                 with self.lock:
                     job['failures'] += 1
                     self._event('error', f'{label} 중 오류가 났습니다: {exc}')

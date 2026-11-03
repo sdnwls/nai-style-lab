@@ -152,6 +152,7 @@ async function poll(force = false) {
     for (const event of status.events) {
       lastEvent = Math.max(lastEvent, event.id);
       toast(event.text, event.level);
+      if (event.level === 'warn') window.reportPageError?.(event.text);  // retries, a state file that did not load
     }
     if (status.settings_rev !== confRev) {
       app.conf = await get('/api/settings');
@@ -163,6 +164,7 @@ async function poll(force = false) {
     app.page?.onStatus?.(status, previous, force);
   } catch (error) {
     if (force) toast(error.message, 'error');
+    else window.reportPageError?.(`status: ${error.message}`);  // not shown (it retries by itself), but on record
   }
 }
 

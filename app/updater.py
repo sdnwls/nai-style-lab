@@ -59,6 +59,7 @@ class Updater:
         self.repo = repo
         self.work = self.root / WORK
         self.fetch, self.launch = fetch, launch
+        self.log = lambda text: None  # main.py points it at the app's log: errors here show only on 설정 → 데이터
         self.lock = threading.Lock()
         # state: idle → checking → latest | available → downloading → preparing → restarting (or back, with error)
         self.info = {'current': version, 'state': 'idle', 'latest': None, 'notes': '', 'page': None,
@@ -79,6 +80,8 @@ class Updater:
     def _set(self, **changes):
         with self.lock:
             self.info.update(changes)
+        if changes.get('error'):
+            self.log(f"update: {changes['error']}")
 
     def check(self):
         """Ask GitHub for the latest release; the view afterwards (an error is in it, not raised)."""

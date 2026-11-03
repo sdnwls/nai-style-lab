@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / 'app'))
 
 from PIL import Image  # noqa: E402
 
-from bridge import App  # noqa: E402
+from bridge import LOG_COPY_LINES, MAX_LOG_BYTES, App  # noqa: E402
 from engine import Engine  # noqa: E402
 from updater import Updater  # noqa: E402
 from version import VERSION  # noqa: E402
@@ -63,6 +63,24 @@ def main():
         ok(app, 'POST', '/api/settings', {'changes': {'sampler': 'k_euler_ancestral'}})
         assert meta['efforts'] == {'high': 'High', 'medium': 'Medium'} and meta['effort_model'] in meta['models']
         assert 'effort' in error(app, 'POST', '/api/settings', {'changes': {'effort': 'low'}})
+
+        # ---- the log people send: no key, no Windows user name, newest lines; an oversized one is cut at launch
+        log_file = data / 'app.log'
+        logged = App(engine, log_file)
+        assert ok(logged, 'GET', '/api/log') == {'text': ''}, 'nothing logged yet'
+        engine.api_key = 'pst-secret'
+        logged.log(f'failed with pst-secret in {Path.home()}\\app')
+        engine.api_key = ''
+        text = ok(logged, 'GET', '/api/log')['text']
+        assert 'pst-secret' not in text and str(Path.home()) not in text and '[API key]' in text and '~\\app' in text
+        for n in range(LOG_COPY_LINES + 5):
+            logged.log(f'line {n}')
+        text = ok(logged, 'GET', '/api/log')['text'].splitlines()
+        assert len(text) == LOG_COPY_LINES and text[-1].endswith(f'line {LOG_COPY_LINES + 4}'), 'the end of it'
+        log_file.write_bytes(b'x' * (MAX_LOG_BYTES + 1))
+        App(engine, log_file)
+        assert log_file.stat().st_size == MAX_LOG_BYTES // 2
+        log_file.unlink()
         rev = lambda: ok(app, 'GET', '/api/status')['settings_rev']
         before = rev()
         ok(app, 'POST', '/api/settings', {'changes': {'steps': 20}})

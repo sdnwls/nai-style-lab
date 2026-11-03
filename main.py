@@ -5,6 +5,7 @@ The window and the engine live in this one process: closing the window saves and
 import ctypes
 import ctypes.wintypes
 import json
+import logging
 import math
 import os
 import secrets
@@ -245,7 +246,12 @@ def serve_files(window, app):
             url = str(args.Request.Uri)
             if not url.startswith(ORIGIN + '/'):
                 return
-            found = app.resource(urllib.parse.urlsplit(url).path) if args.Request.Method == 'GET' else None
+            parts = urllib.parse.urlsplit(url)
+            if parts.path == '/page-error':  # from index.html: anything that went wrong in the page
+                app.log(f'page: {urllib.parse.unquote(parts.query)}')
+                args.Response = core.Environment.CreateWebResourceResponse(None, 204, 'No Content', 'Cache-Control: no-store')
+                return
+            found = app.resource(parts.path) if args.Request.Method == 'GET' else None
             if not found:
                 args.Response = core.Environment.CreateWebResourceResponse(None, 404, 'Not Found', 'Cache-Control: no-store')
                 return
@@ -273,6 +279,9 @@ def serve_files(window, app):
         if not args.IsSuccess:
             return
         core = control.CoreWebView2
+        app.log(f'started: app {VERSION}, Windows build {sys.getwindowsversion().build}, WebView2 {core.Environment.BrowserVersionString}')
+        # The GPU or page process dying is what a black window can look like from the outside.
+        core.ProcessFailed += lambda _, failed: app.log(f'WebView2 process failed: {failed.ProcessFailedKind}, {failed.Reason}, exit code {failed.ExitCode}')
         core.AddWebResourceRequestedFilter(ORIGIN + '/*', CoreWebView2WebResourceContext.All)
         core.WebResourceRequested += respond
         core.NavigationStarting += stay
@@ -281,9 +290,24 @@ def serve_files(window, app):
     window.native.webview.CoreWebView2InitializationCompleted += ready
 
 
+def log_startup_check(window, app):
+    """One line for a report of a black window. rendered=False: the page's code did not start. rendered=True: the
+    page is fine, so what the user sees is the graphics not showing it. No line at all: the page's thread is stuck."""
+    time.sleep(15)
+    try:
+        app.log(f"startup check: rendered={bool(window.evaluate_js("document.getElementById('sidebar').childElementCount"))}")
+    except Exception:  # the window closed meanwhile
+        pass
+
+
 def open_window(app):
     """Show the app window and block until it is closed. Gives ``app`` its Save As, Open, close and drag."""
     import webview
+
+    # pythonw.exe has no console: what pywebview reports (WebView2 failing to start, say) would go nowhere.
+    handler = logging.Handler(logging.WARNING)
+    handler.emit = lambda record: app.log(f'pywebview: {handler.format(record)}')
+    logging.getLogger('pywebview').addHandler(handler)
 
     # screen= places it at the screen's centre: pywebview's own centring is ignored, so Windows would cascade each
     # launch further down and right.
@@ -321,6 +345,7 @@ def open_window(app):
     window.events.before_show += lambda: serve_files(window, app)
     window.events.shown += lambda: name_taskbar_button(window.native.Handle.ToInt64())
     window.events.shown += lambda: fit_page(window.native.Handle.ToInt64(), page_w, page_h)
+    window.events.shown += lambda: threading.Thread(target=log_startup_check, args=(window, app), daemon=True).start()
     # Own taskbar entry with the app's icon, not grouped under Python.
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
     webview.start(icon=str(ICON))
@@ -337,6 +362,9 @@ def main():
         return
     app = App(engine, DATA_DIR / 'app.log')
     app.updater = updater = Updater(ROOT, VERSION, REPO)
+    engine.log = updater.log = app.log
+    threading.excepthook = lambda crash: app.log(f'{crash.thread}\n' + ''.join(
+        traceback.format_exception(crash.exc_type, crash.exc_value, crash.exc_traceback)))
     instance = Instance(app)
     LOCK_FILE.write_text(json.dumps(instance.lock_info()), encoding='utf-8')
     threading.Thread(target=app.thumbnail_worker, daemon=True).start()

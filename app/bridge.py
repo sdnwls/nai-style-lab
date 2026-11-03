@@ -36,6 +36,9 @@ def open_external(target):
     os.startfile(target)
 
 
+MAX_LOG_BYTES = 1_000_000
+LOG_COPY_LINES = 200
+
 mimetypes.add_type('text/javascript', '.js')
 mimetypes.add_type('text/css', '.css')
 mimetypes.add_type('image/webp', '.webp')
@@ -50,6 +53,8 @@ class App:
         self.save_dialog = self.open_dialog = self.close_window = self.start_drag = None
         self.updater = None
         self.log_file = log_file
+        if log_file and log_file.exists() and log_file.stat().st_size > MAX_LOG_BYTES:  # keeps its newest half
+            log_file.write_bytes(log_file.read_bytes()[-MAX_LOG_BYTES // 2:])
         self.thumb_lock = threading.Lock()  # held while one is made
         self.thumb_queue = queue.Queue()
         self.thumb_waiting = set()  # queued and not made yet; its own lock, so the window never waits on a making
@@ -61,6 +66,10 @@ class App:
 
     def log(self, text):
         if self.log_file:
+            # This file gets sent to other people: never the API key, nor the Windows user name in a path.
+            text = text.replace(str(Path.home()), '~')
+            if self.engine.api_key:
+                text = text.replace(self.engine.api_key, '[API key]')
             with open(self.log_file, 'a', encoding='utf-8') as fh:
                 fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {text}\n")
 
@@ -85,9 +94,16 @@ class App:
             self.log(f'{method} {path}\n{traceback.format_exc()}')
             return json.dumps({'ok': False, 'error': f'내부 오류가 났습니다: {exc}'}, ensure_ascii=False)
 
+    def log_tail(self):
+        """The log's end, for 설정 → 데이터's copy button: as much as fits a post."""
+        if not self.log_file or not self.log_file.exists():
+            return ''
+        return '\n'.join(self.log_file.read_text(encoding='utf-8', errors='replace').splitlines()[-LOG_COPY_LINES:])
+
     def get(self, path, query):
         e = self.engine
         routes = {
+            '/api/log': lambda: {'text': self.log_tail()},
             # update: the updater's state, so every page can show that a new version is out
             '/api/status': lambda: {**e.status(int(query.get('since', 0))),
                                     'update': self.updater.view() if self.updater else None},

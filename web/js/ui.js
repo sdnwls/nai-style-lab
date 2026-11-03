@@ -179,6 +179,7 @@ export function icon(name, extra = '') {
 // ---------------------------------------------------------------- toasts
 const TOAST_ICON = { ok: 'check', info: 'info', warn: 'alert', error: 'alert' };
 export function toast(text, level = 'info', ms) {
+  if (level === 'error') window.reportPageError?.(text);  // every error the user is shown also goes to data\app.log
   const root = document.getElementById('toasts');
   const close = () => {
     el.classList.add('leaving');

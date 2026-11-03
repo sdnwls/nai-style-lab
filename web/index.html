@@ -10,6 +10,37 @@
 <link rel="icon" type="image/png" sizes="32x32" href="/static/icon-32.png">
 <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
 <link rel="stylesheet" href="/static/app.css">
+<script>
+// Page errors reach data\app.log (main.py, /page-error) from here, not from the modules: this also covers them not
+// starting at all, which leaves a black window. The modules report through it too (toast in ui.js). Repeats are
+// dropped and the count is capped, so one error in a loop cannot fill the log.
+(function () {
+  var sent = 0, last = '';
+  function report(text) {
+    text = String(text).slice(0, 1500);
+    if (text === last || sent >= 100) return;
+    last = text;
+    sent++;
+    fetch('/page-error?' + encodeURIComponent(text));
+  }
+  window.reportPageError = report;
+  window.addEventListener('error', function (event) {
+    var file = event.target && (event.target.src || event.target.href);
+    report(file ? 'failed to load ' + file : event.message + ' (' + event.filename + ':' + event.lineno + ')');
+  }, true);
+  window.addEventListener('unhandledrejection', function (event) {
+    report('unhandled: ' + (event.reason && event.reason.message || event.reason));
+  });
+  setTimeout(function () {
+    if (document.getElementById('sidebar').childElementCount) return;
+    report('the page did not start within 15 seconds');
+    var box = document.createElement('div');
+    box.style.cssText = 'padding:32px;color:#e8eaf0;font-size:15px;line-height:1.7';
+    box.textContent = '화면을 불러오지 못했습니다. 문의하실 때 앱 폴더의 data\\app.log 파일을 보내 주세요.';
+    document.getElementById('content').append(box);
+  }, 15000);
+})();
+</script>
 </head>
 <body>
 <div id="app">

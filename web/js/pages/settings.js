@@ -1,6 +1,6 @@
 // 설정 — everything saves as you type. The combo rules are edited on 작가 · 조합 만들기.
 import { get, post, keepDraft } from '../api.js';
-import { h, morph, limits, icon, toast, fmt, confirmDialog, promptDialog, pageHead, card } from '../ui.js';
+import { h, morph, limits, icon, toast, fmt, confirmDialog, promptDialog, pageHead, card, copyText } from '../ui.js';
 
 // The settings themselves are app.conf (one copy for every page). showKey: the API key shown in clear.
 // chars: the character prompts being edited (empty boxes included, which the server drops on save).
@@ -222,6 +222,18 @@ function data() {
       '데이터 내보내기를 누르면 모든 설정을 zip 하나로 묶어 추출합니다. 데이터 불러오기를 통해 데이터를 불러오면 지금의 모든 데이터는 삭제됩니다.'));
 }
 
+function report() {
+  return section('alert', 'rose', '오류 보고', '오류는 data\\app.log에 자동으로 기록됩니다. API 키와 Windows 사용자 이름은 가려서 기록합니다.',
+    h('button', { class: 'btn', onclick: copyLog }, icon('copy'), '오류 로그 복사'),
+    h('p', { class: 'note' }, '문제가 생기면 복사해서 제보 글이나 댓글에 붙여 넣어 주세요. 앱이 켜지지 않으면 data\\app.log 파일을 보내 주세요.'));
+}
+
+async function copyLog() {
+  const { text } = await app.act(get('/api/log'));
+  if (text) copyText(text, '오류 로그를 복사했습니다.');
+  else toast('아직 기록된 내용이 없습니다.', 'info');
+}
+
 // Python shows Windows' Save As over this window and writes the zip there (path null: cancelled).
 async function exportData() {
   const { path } = await app.act(post('/api/data/export'));
@@ -280,7 +292,7 @@ function render() {
   const columns = (left, right) => h('div', { class: 'grid settings-columns', style: { alignItems: 'start' } },
     h('div', { class: 'stack', style: { gap: '16px' } }, left), h('div', { class: 'stack', style: { gap: '16px' } }, right));
   const body = tab === 'prompts' ? h('div', { class: 'stack', style: { gap: '16px' } }, named(prompts(), 'prompts'), redraw())
-    : tab === 'data' ? columns([update(), data()], resets())
+    : tab === 'data' ? columns([update(), data(), report()], resets())
     : columns([named(connection(), 'connection')], generation());
   morph(root,
     pageHead({ title: '설정', desc: '바꾸면 바로 저장됩니다.',
