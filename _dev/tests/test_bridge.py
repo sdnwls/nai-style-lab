@@ -55,6 +55,14 @@ def main():
         meta = ok(app, 'GET', '/api/meta')
         assert meta['ranges']['evo_count'] == [1, 60], 'the input limits come from the one table'
         assert meta['version'] == VERSION
+        assert list(meta['samplers'].values()) == ['Euler Ancestral', 'Euler', 'DPM++ 2S Ancestral', 'DPM++ 2M SDE', 'DPM++ 2M', 'DPM++ SDE'], "the site's names, in its order"
+        assert ok(app, 'GET', '/api/settings')['settings']['sampler'] == 'k_euler_ancestral', 'the default is still the first'
+        assert 'sampler' in error(app, 'POST', '/api/settings', {'changes': {'sampler': 'Euler'}}), 'a shown name is not a value'
+        ok(app, 'POST', '/api/settings', {'changes': {'sampler': 'k_dpmpp_2m_sde'}})
+        assert ok(app, 'GET', '/api/settings')['settings']['sampler'] == 'k_dpmpp_2m_sde', 'the sampler that was missing can be chosen'
+        ok(app, 'POST', '/api/settings', {'changes': {'sampler': 'k_euler_ancestral'}})
+        assert meta['efforts'] == {'high': 'High', 'medium': 'Medium'} and meta['effort_model'] in meta['models']
+        assert 'effort' in error(app, 'POST', '/api/settings', {'changes': {'effort': 'low'}})
         rev = lambda: ok(app, 'GET', '/api/status')['settings_rev']
         before = rev()
         ok(app, 'POST', '/api/settings', {'changes': {'steps': 20}})

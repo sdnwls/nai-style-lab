@@ -331,7 +331,7 @@ export async function promptViewer(app, file) {
   const scan = await run(post('/api/artists/scan', { text: [base, ...characters].join('\n') }));
   const settings = [meta.source.replace(/\s+[0-9A-F]{8}$/, ''), meta.width && `${meta.width}×${meta.height}`,
     meta.steps && `${meta.steps} steps`, meta.scale != null && `CFG ${meta.scale}`, meta.cfg_rescale && `Rescale ${meta.cfg_rescale}`,
-    meta.sampler, meta.seed != null && `시드 ${meta.seed}`, meta.skip_cfg_above_sigma && 'Variety+'].filter(Boolean).join(' · ');
+    app.meta?.samplers[meta.sampler] ?? meta.sampler, meta.seed != null && `시드 ${meta.seed}`, meta.skip_cfg_above_sigma && 'Variety+'].filter(Boolean).join(' · ');
   const url = URL.createObjectURL(file);
   const section = (title, text) => h('div', { class: 'viewer-section' },
     h('div', { class: 'row' }, h('h4', {}, title), h('span', { class: 'spacer' }),

@@ -99,7 +99,8 @@ class App:
             '/api/improve': e.improve_view,
             '/api/settings': e.settings_payload,
             '/api/meta': lambda: {'models': core.MODELS, 'sizes': list(core.SIZE_PRESETS),
-                                  'samplers': core.SAMPLERS, 'tiers': core.TIER_ORDER,
+                                  'samplers': core.SAMPLERS, 'efforts': core.EFFORTS, 'effort_model': core.EFFORT_MODEL,
+                                  'tiers': core.TIER_ORDER,
                                   'data_dir': str(e.data_dir), 'max_seed': core.MAX_SEED, 'version': VERSION,
                                   # the one table of input limits; every field on every page reads it
                                   'ranges': {key: [low, high] for key, (_, low, high) in SETTING_RANGES.items()}},

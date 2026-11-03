@@ -33,8 +33,8 @@ MAX_FAILURE_STREAK = 3  # images failing in a row (each already retried) stop th
 DRAW_TRIES = 30  # draws to find a style not made before, per image (random combos, evolution, refine variants)
 
 SETTING_DEFAULTS = {
-    'model': core.MODELS[0], 'size': list(core.SIZE_PRESETS)[0], 'sampler': core.SAMPLERS[0],
-    'steps': 28, 'cfg': 5.0, 'cfg_rescale': 0.0, 'delay': 3.0, 'delay_max': 5.0, 'seed': '',
+    'model': core.MODELS[0], 'size': list(core.SIZE_PRESETS)[0], 'sampler': list(core.SAMPLERS)[0],
+    'effort': list(core.EFFORTS)[0], 'steps': 28, 'cfg': 5.0, 'cfg_rescale': 0.0, 'delay': 3.0, 'delay_max': 5.0, 'seed': '',
     'global_min_w': 0.8, 'global_max_w': 1.8, 'gen_min': 4, 'gen_max': 8,
     'gen_count': 50, 'evo_count': 20, 'improve_variants': 4,
     'base_prompt': core.DEFAULT_BASE_PROMPT, 'character_prompt': [], 'negative': core.DEFAULT_NEGATIVE,
@@ -52,7 +52,12 @@ SETTING_RANGES = {
     'gen_count': ('무작위 조합 기본 개수', 1, 200), 'evo_count': ('진화 조합 수', 1, 60),
     'improve_variants': ('다듬기 라운드당 변형', 2, 12),
 }
-SETTING_CHOICES = {'model': core.MODELS, 'size': list(core.SIZE_PRESETS), 'sampler': core.SAMPLERS, 'arena_mode': ARENA_MODES}
+SETTING_CHOICES = {'model': core.MODELS, 'size': list(core.SIZE_PRESETS), 'sampler': list(core.SAMPLERS), 'effort': list(core.EFFORTS), 'arena_mode': ARENA_MODES}
+
+
+def request_model(s):
+    """The model a request names: Medium effort is a model of its own, and only V5 Full has it."""
+    return core.MEDIUM_MODEL if s['effort'] == 'medium' and s['model'] == core.EFFORT_MODEL else s['model']
 
 
 class UserError(Exception):
@@ -227,7 +232,7 @@ class Engine:
             self.state['ui_state']['seed'] = s['seed']
             self._event('info', f"시드를 {s['seed']}(으)로 정했습니다. 앞으로 모든 그림이 이 시드로 생성됩니다.")
         width, height = core.SIZE_PRESETS[s['size']]
-        return dict(api_key=self.api_key, model=s['model'], width=width, height=height, steps=s['steps'],
+        return dict(api_key=self.api_key, model=request_model(s), width=width, height=height, steps=s['steps'],
                     cfg=s['cfg'], cfg_rescale=s['cfg_rescale'], sampler=s['sampler'], delay=s['delay'], delay_max=s['delay_max'],
                     base_prompt=s['base_prompt'], character_prompt=s['character_prompt'],
                     character_negative=s['character_negative'],
@@ -1700,7 +1705,7 @@ class Engine:
         width, height = core.SIZE_PRESETS[s['size']]
         estimate = None
         if data['active'] and (data['tier_num'] == 3 or data['unlimited']):
-            estimate = core.estimate_v5_images(data['remaining_percent'], width, height, s['steps'], s['model'])
+            estimate = core.estimate_v5_images(data['remaining_percent'], width, height, s['steps'], request_model(s))
         return {'tier': data['tier'], 'active': data['active'], 'anlas': data['anlas'],
                 'remaining_percent': data['remaining_percent'],
                 'estimate': {'left': estimate[0], 'total': estimate[1]} if estimate else None,

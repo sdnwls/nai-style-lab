@@ -231,6 +231,7 @@ def usage_estimate_check():
     assert core.estimate_v5_images(100, 832, 1216, 20, v5)[1] > 1735, 'fewer steps, more images'
     assert core.estimate_v5_images(100, 832, 1216, 29, v5) is None, 'past 28 steps it is not free'
     assert core.estimate_v5_images(100, 832, 1216, 28, 'nai-diffusion-4-5-full') is None, 'only V5 has the bar'
+    assert core.estimate_v5_images(100, 832, 1216, 14, core.MEDIUM_MODEL) is None, 'Medium was never measured'
     print('PASS: V5 usage estimate.')
 
 

@@ -33,7 +33,16 @@ WEB_PARAMS = {'ucPresetId': 'none', 'qualityPresetId': 'none', 'autoSmea': False
               'controlnet_strength': 1, 'legacy': False, 'add_original_image': True, 'legacy_v3_extend': False,
               'use_coords': False, 'normalize_reference_strength_multiple': True, 'inpaintImg2ImgStrength': 1,
               'straight_alpha': True, 'tag_hint_qt': 0, 'tag_hint_uc_preset': 0, 'deliberate_euler_ancestral_bug': False,
-              'prefer_brownian': True, 'noise_schedule': 'karras'}
+              'prefer_brownian': True}
+
+# The site's Effort switch: only V5 Full has it, and Medium is a model of its own. Like the site, Medium fixes these:
+# steps, sampler, no CFG Rescale, and its "heavy" undesired content instead of the user's (who only keeps CFG).
+EFFORTS = {'high': 'High', 'medium': 'Medium'}
+EFFORT_MODEL = 'nai-diffusion-5-full'
+MEDIUM_MODEL = 'nai-diffusion-5-full-medium'
+MEDIUM_FIXED = {'steps': 14, 'sampler': 'k_euler_ancestral', 'noise_schedule': 'karras', 'cfg_rescale': 0,
+                'ucPresetId': 'heavy', 'tag_hint_uc_preset': 2}
+MEDIUM_NEGATIVE = 'lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page'
 
 DEFAULT_NEGATIVE = 'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, blurry, artistic error, bad proportions, logo, artist logo, comic, manga panel, panel, speech bubble, cover art, magazine cover, collage, text focus, english text, japanese text, multiple views'
 
@@ -81,7 +90,9 @@ TIER_CUTOFFS = {'S': 0.1, 'A': 0.3, 'B': 0.7, 'C': 0.9, 'D': 1.0}
 
 TIER_MATCH_MULTIPLIER = {'S': 1.0, 'A': 0.9, 'B': 0.6, 'C': 0.3, 'D': 0.1}
 
-SAMPLERS = ['k_euler_ancestral', 'k_euler', 'k_dpmpp_2s_ancestral', 'k_dpmpp_2m', 'k_dpmpp_sde']
+# novelai.net's V4/V5 list, in its order: the value it sends -> the name it shows.
+SAMPLERS = {'k_euler_ancestral': 'Euler Ancestral', 'k_euler': 'Euler', 'k_dpmpp_2s_ancestral': 'DPM++ 2S Ancestral',
+            'k_dpmpp_2m_sde': 'DPM++ 2M SDE', 'k_dpmpp_2m': 'DPM++ 2M', 'k_dpmpp_sde': 'DPM++ SDE'}
 
 ARTIST_TAG_RE = re.compile('artist:[^:,]+')
 
@@ -145,6 +156,7 @@ def fetch_user_data(api_key: str):
 
 def estimate_v5_images(percent, width, height, steps, model):
     if (percent is None or not model.startswith('nai-diffusion-5')
+            or model == MEDIUM_MODEL  # ponytail: its use of the bar was never measured; measure it to show a count
             or width <= 0 or height <= 0 or width * height > 1024 * 1024
             or not 1 <= steps <= 28):
         return None
@@ -191,12 +203,18 @@ def generate_style_image(api_key: str, base_prompt: str, character_prompt: list[
         base_caption = ', '.join(p.strip() for p in base.replace('{artist}', '').split(',') if p.strip())
     if not base_caption:
         raise ValueError('프롬프트가 비어 있습니다.')
+    medium = model == MEDIUM_MODEL
+    if medium:  # the site adds "nsfw" to this preset unless the base prompt names it
+        negative_prompt = MEDIUM_NEGATIVE if 'nsfw' in base_caption.lower() else f'nsfw, {MEDIUM_NEGATIVE}'
+        character_negative = ()
     # Every character, each once, in its own slot (as the site sends them: positions left to the AI).
     chars = character_prompt_parts(character_prompt, character_negative)
     center = {'x': 0.5, 'y': 0.5}
     parameters = {
         'params_version': 4, 'width': width, 'height': height, 'scale': cfg, 'sampler': sampler, 'steps': steps,
         'seed': seed, 'n_samples': 1, 'cfg_rescale': cfg_rescale, **WEB_PARAMS,
+        'noise_schedule': 'exponential' if sampler == 'k_dpmpp_2m' else 'karras',  # the site's default for each sampler
+        **(MEDIUM_FIXED if medium else {}),
         'v4_prompt': {'caption': {'base_caption': base_caption,
                                   'char_captions': [{'char_caption': c, 'centers': [center]} for c, _ in chars]},
                       'use_coords': False, 'use_order': True},

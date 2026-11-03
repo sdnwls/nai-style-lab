@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'app'))
 
 import core  # noqa: E402
-from engine import CONVERGED_GENERATIONS, Engine, UserError  # noqa: E402
+from engine import CONVERGED_GENERATIONS, Engine, UserError, request_model  # noqa: E402
 
 PNG = b'\x89PNG\r\n\x1a\n' + b'0' * 64
 
@@ -416,6 +416,31 @@ def guards():
         p = sent['parameters']
         assert [c['char_caption'] for c in p['v4_negative_prompt']['caption']['char_captions']] == ['tail', '']
         assert [c['uc'] for c in p['characterPrompts']] == ['tail', '']
+        # Each sampler goes with the noise schedule the site picks for it.
+        core.http.client.HTTPSConnection = FakeConnection
+        try:
+            for sampler in core.SAMPLERS:
+                core.generate_style_image('k', '1girl', [], '', '', 'm', 64, 64, 1, 5.0, sampler, 1, 0.0)
+                assert sent['parameters']['sampler'] == sampler
+                assert sent['parameters']['noise_schedule'] == ('exponential' if sampler == 'k_dpmpp_2m' else 'karras')
+            # Medium effort sends what the site's Medium sends, whatever the fields say; only CFG stays the user's.
+            core.generate_style_image('k', '1girl', ['ahri'], '', 'my negative', core.MEDIUM_MODEL, 64, 64, 28, 5.0,
+                                      'k_dpmpp_2m', 1, 0.5, character_negative=['tail'])
+            p = sent['parameters']
+            assert sent['model'] == 'nai-diffusion-5-full-medium'
+            assert (p['steps'], p['sampler'], p['cfg_rescale'], p['noise_schedule']) == (14, 'k_euler_ancestral', 0, 'karras')
+            assert (p['ucPresetId'], p['tag_hint_uc_preset'], p['scale']) == ('heavy', 2, 5.0)
+            assert p['negative_prompt'] == p['v4_negative_prompt']['caption']['base_caption'] == f'nsfw, {core.MEDIUM_NEGATIVE}'
+            assert p['characterPrompts'][0]['uc'] == p['v4_negative_prompt']['caption']['char_captions'][0]['char_caption'] == ''
+            core.generate_style_image('k', 'NSFW, 1girl', [], '', 'x', core.MEDIUM_MODEL, 64, 64, 28, 5.0, 'k_euler', 1, 0.0)
+            assert sent['parameters']['negative_prompt'] == core.MEDIUM_NEGATIVE, 'a prompt naming nsfw keeps it out'
+        finally:
+            core.http.client.HTTPSConnection = real
+        # The setting picks the model only where the site has the switch, and High is the default.
+        assert engine.settings()['effort'] == 'high'
+        assert request_model(engine.settings()) == engine.settings()['model']
+        assert request_model({'effort': 'medium', 'model': 'nai-diffusion-5-full'}) == core.MEDIUM_MODEL
+        assert request_model({'effort': 'medium', 'model': 'nai-diffusion-5-curated'}) == 'nai-diffusion-5-curated'
         # Saving drops an empty character together with its negative; the others keep theirs.
         engine.update_settings({'character_prompt': ['ahri', ' ', 'sona'], 'character_negative': ['tail', 'x', 'hat']})
         s = engine.settings()

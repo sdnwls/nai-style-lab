@@ -47,6 +47,7 @@ function markSaved() {
 }
 
 const s = () => app.conf.settings;
+const isMedium = () => s().effort === 'medium' && s().model === app.meta.effort_model;
 
 function field(label, control, help) {
   return h('div', { class: 'field' }, h('label', {}, label), control, help ? h('div', { class: 'help' }, help) : null);
@@ -60,9 +61,10 @@ function number(key, { step = 1, width } = {}) {
     onblur: flush, onkeydown: (e) => { if (e.key === 'Enter') e.currentTarget.blur(); } });
 }
 
-function select(key, options) {
-  return h('select', { class: 'select', onchange: (e) => save(key, e.currentTarget.value) },
-    options.map((o) => h('option', { value: o, selected: s()[key] === o }, o)));
+function select(key, options, labels = {}) {
+  // Rendered again at once: the model and effort decide which fields there are.
+  return h('select', { class: 'select', onchange: (e) => { save(key, e.currentTarget.value); render(); } },
+    options.map((o) => h('option', { value: o, selected: s()[key] === o }, labels[o] ?? o)));
 }
 
 // The shared card (ui.js), called positionally: every settings card has an icon, tone, title and line.
@@ -97,34 +99,42 @@ function connection() {
 
 function generation() {
   const meta = app.meta;
+  const hasEffort = s().model === meta.effort_model;
+  const medium = isMedium();  // like the site, no fields for what Medium fixes
   const seed = h('input', { class: 'input num', value: s().seed, placeholder: '비우면 무작위', inputmode: 'numeric',
     onchange: (e) => save('seed', e.currentTarget.value.trim()) });
   return section('image', 'sky', '이미지 생성', '모든 그림(무작위 조합, 진화 조합, 다듬기, 자유 생성)이 이 설정과 하나의 시드로 그려집니다.',
     h('div', { class: 'grid', style: { gridTemplateColumns: 'repeat(3, 1fr)' } },
       field('모델', select('model', meta.models)),
+      hasEffort ? field('Effort', select('effort', Object.keys(meta.efforts), meta.efforts)) : null,
       field('크기', select('size', meta.sizes)),
-      field('샘플러', select('sampler', meta.samplers)),
-      field('Steps', number('steps'), '28 이하가 무제한 범위입니다.'),
+      medium ? null : field('샘플러', select('sampler', Object.keys(meta.samplers), meta.samplers)),
+      medium ? null : field('Steps', number('steps'), '28 이하가 무제한 범위입니다.'),
       field('CFG (Scale)', number('cfg', { step: 0.1 })),
-      field('CFG Rescale', number('cfg_rescale', { step: 0.05 })),
-      field('생성 간 대기 (초)', h('div', { class: 'range-pair' }, number('delay', { step: 0.5 }), h('span', {}, '-'), number('delay_max', { step: 0.5 }))),
-      h('div', { class: 'field', style: { gridColumn: 'span 2' } }, h('label', {}, '시드'),
+      medium ? null : field('CFG Rescale', number('cfg_rescale', { step: 0.05 })),
+      // With Effort shown (High and Medium alike) the delay closes its row wide and the seed gets a row of its own;
+      // one cell would be too narrow to read a seed in.
+      h('div', { class: 'field', style: { gridColumn: hasEffort ? 'span 2' : 'auto' } }, h('label', {}, '생성 간 대기 (초)'),
+        h('div', { class: 'range-pair' }, number('delay', { step: 0.5 }), h('span', {}, '-'), number('delay_max', { step: 0.5 }))),
+      h('div', { class: 'field', style: { gridColumn: hasEffort ? '1 / -1' : 'span 2' } }, h('label', {}, '시드'),
         h('div', { class: 'input-group' }, seed,
           h('button', { class: 'btn', onclick: () => { save('seed', String(Math.floor(Math.random() * meta.max_seed))); render(); } }, icon('refresh'), '무작위'))),
       // Under the delay and seed row, across both: one line instead of wrapping in the delay's column.
       h('div', { class: 'field', style: { gridColumn: '1 / -1', marginTop: '-10px' } },
+        medium ? h('div', { class: 'help' }, 'Medium은 사이트처럼 Steps 14, Euler Ancestral로 고정되고 CFG Rescale과 내 네거티브 프롬프트(캐릭터 포함)를 쓰지 않습니다.') : null,
         h('div', { class: 'help' }, 'NovelAI는 짧은 시간에 많은 이미지를 자동으로 생성하는 계정을 제한할 수 있습니다 (403).'))));
 }
 
 function prompts() {
   const base = h('textarea', { class: 'textarea grow', rows: 3, value: s().base_prompt,
     oninput: (e) => stage('base_prompt', e.currentTarget.value), onchange: flush });
-  const negative = h('textarea', { class: 'textarea grow', rows: 4, value: s().negative,
+  const medium = isMedium();  // Medium sends its own negative: the user's stay readable, and come back on High
+  const negative = h('textarea', { class: 'textarea grow', rows: 4, value: s().negative, disabled: medium,
     oninput: (e) => stage('negative', e.currentTarget.value), onchange: flush });
   chars ??= (s().character_prompt || []).map((p, i) => ({ p, n: s().character_negative?.[i] ?? '' }));
   // Both lists go together, so the server keeps each negative with its character.
   const stageChars = () => { stage('character_prompt', chars.map((c) => c.p)); stage('character_negative', chars.map((c) => c.n)); };
-  const box = (c, key, placeholder) => h('textarea', { class: 'textarea grow', rows: 2, value: c[key], placeholder,
+  const box = (c, key, placeholder) => h('textarea', { class: 'textarea grow', rows: 2, value: c[key], placeholder, disabled: key === 'n' && medium,
     oninput: (e) => { c[key] = e.currentTarget.value; stageChars(); }, onchange: flush });
   const list = h('div', { class: 'stack' }, chars.map((c, i) =>
     h('div', { class: 'row', style: { alignItems: 'flex-start' } }, h('span', { class: 'badge', style: { marginTop: '8px' } }, `캐릭터 ${i + 1}`),
@@ -136,7 +146,7 @@ function prompts() {
     h('div', { class: 'stack' },
       field('기본 프롬프트', base, h('span', {}, h('code', {}, '{artist}'), ' 위치에 작가 태그가 들어갑니다.')),
       field('캐릭터 프롬프트', list),
-      field('네거티브 프롬프트', negative)),
+      field('네거티브 프롬프트', negative, medium ? 'Effort가 Medium이면 사이트의 고정 네거티브를 쓰므로 이 칸과 캐릭터 네거티브는 적용되지 않습니다. High로 바꾸면 다시 적용됩니다.' : null)),
     app.status?.stage.checklist.prompt ? null : h('div', { id: 'prompt-confirm', class: 'row', style: { marginTop: '14px' } },
       h('span', { class: 'note', style: { flex: 1 } }, '기본값 그대로 사용하려면 오른쪽 버튼을 누르세요.'),
       h('button', { class: 'btn primary', onclick: () => app.act(post('/api/settings', { changes: { prompt_checked: true } }), '프롬프트를 확인했습니다.') },
@@ -146,7 +156,7 @@ function prompts() {
 // 다시 그리기: the listed combos (all, or the top 30%) drawn again with the prompts above (another character),
 // replacing their pictures. The export sits next to it: that zip is the only way back to the old pictures.
 function redraw() {
-  return section('refresh', 'sky', '다시 그리기', '바꾼 프롬프트, 시드로 조합을 다시 그려 그림을 바꿉니다. 순위는 그대로입니다.',
+  return section('refresh', 'sky', '다시 그리기', '현재의 프롬프트와 시드로 순위는 유지한 채 그림을 재생성합니다.',
     h('div', { class: 'row wrap' },
       h('button', { class: 'btn', onclick: exportData }, icon('download'), '데이터 내보내기'),
       h('span', { class: 'spacer' }),
