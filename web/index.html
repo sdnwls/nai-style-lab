@@ -14,8 +14,14 @@
 // Page errors reach data\app.log (main.py, /page-error) from here, not from the modules: this also covers them not
 // starting at all, which leaves a black window. The modules report through it too (toast in ui.js). Repeats are
 // dropped and the count is capped, so one error in a loop cannot fill the log.
+// The page's start goes in steps (bootStep: here, then app.js), so a page that never shows says where it stopped:
+// the 15-second report below and main.py's startup check both log bootText().
 (function () {
   var sent = 0, last = '';
+  var boot = { stage: 'page script', at: Date.now() };
+  window.bootStep = function (stage) { boot.stage = stage; boot.at = Date.now(); };
+  window.bootText = function () { return boot.stage + ' (for ' + ((Date.now() - boot.at) / 1000).toFixed(1) + ' s)'; };
+  window.bootReady = function () { return boot.stage === 'ready'; };
   function report(text) {
     text = String(text).slice(0, 1500);
     if (text === last || sent >= 100) return;
@@ -32,8 +38,8 @@
     report('unhandled: ' + (event.reason && event.reason.message || event.reason));
   });
   setTimeout(function () {
-    if (document.getElementById('sidebar').childElementCount) return;
-    report('the page did not start within 15 seconds');
+    if (window.bootReady()) return;
+    report('the page did not start within 15 seconds, stopped at: ' + window.bootText());
     var box = document.createElement('div');
     box.style.cssText = 'padding:32px;color:#e8eaf0;font-size:15px;line-height:1.7';
     box.textContent = '화면을 불러오지 못했습니다. 문의하실 때 앱 폴더의 data\\app.log 파일을 보내 주세요.';

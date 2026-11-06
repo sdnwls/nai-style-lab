@@ -235,10 +235,53 @@ def fit_page(hwnd, width, height):
 
 
 def serve_files(window, app):
-    """Answer every request the window makes to ORIGIN from disk (app.resource), and keep the window there:
-    a link elsewhere opens in the user's browser instead (the page's calls into Python are for this page only)."""
+    """Answer every request the window makes to ORIGIN: the page's calls into Python (/api/..., app.call), its
+    error reports, and its files from disk (app.resource). Keep the window there: a link elsewhere opens in the
+    user's browser instead (the page's calls into Python are for this page only).
+
+    The calls come this way, as plain fetches, not over pywebview's js_api: that one is a script pywebview pushes
+    into the page after it loads, and when it does not take (seen on one PC: no error anywhere), the page waited
+    for it forever behind a black window. Fetches to ORIGIN are what loads the page itself, so they either work
+    or the page is not there at all."""
     from Microsoft.Web.WebView2.Core import CoreWebView2WebResourceContext
-    from System.IO import File, MemoryStream
+    from System import Action, String
+    from System.IO import File, MemoryStream, StreamReader
+    from System.Text import Encoding
+
+    def answer_call(core, args, method, target):
+        # app.call runs on its own thread (a generation start, a Save As dialog: never holding up the window);
+        # the answer is handed to WebView2 back on the window's thread, which its objects need.
+        content = args.Request.Content
+        body = StreamReader(content, Encoding.UTF8).ReadToEnd() if content else ''
+        deferral = args.GetDeferral()
+
+        def finish(data):
+            try:
+                args.Response = core.Environment.CreateWebResourceResponse(
+                    data, 200, 'OK',
+                    'Content-Type: application/json; charset=utf-8\r\nCache-Control: no-store')
+            except Exception:
+                app.log(f'api {method} {target}: answer not delivered\n{traceback.format_exc()}')
+            finally:
+                deferral.Complete()
+
+        def work():
+            try:
+                parsed = json.loads(body) if body else None
+            except ValueError:
+                app.log(f'api {method} {target}: unreadable request body {body[:200]!r}')
+                text = json.dumps({'ok': False, 'error': '앱 내부 오류가 났습니다: 요청을 읽지 못했습니다.'}, ensure_ascii=False)
+            else:
+                text = app.call(method, target, parsed)  # never raises: errors come back as {ok: false}, logged
+            # Encoded here, off the window's thread, and with the string overload named: left to choose, pythonnet
+            # took GetBytes(char[]) and copied the text one character at a time (~12 ms for 77 KB, on that thread).
+            data = MemoryStream(Encoding.UTF8.GetBytes.Overloads[String](text))
+            try:
+                window.native.BeginInvoke(Action(lambda: finish(data)))
+            except Exception:  # the window is gone (closed mid-call): nobody waits for the answer
+                app.log(f'api {method} {target}: window gone before the answer\n{traceback.format_exc()}')
+
+        threading.Thread(target=work, daemon=True).start()
 
     def respond(core, args):
         url = ''
@@ -247,6 +290,9 @@ def serve_files(window, app):
             if not url.startswith(ORIGIN + '/'):
                 return
             parts = urllib.parse.urlsplit(url)
+            if parts.path.startswith('/api/'):
+                answer_call(core, args, str(args.Request.Method), url[len(ORIGIN):])
+                return
             if parts.path == '/page-error':  # from index.html: anything that went wrong in the page
                 app.log(f'page: {urllib.parse.unquote(parts.query)}')
                 args.Response = core.Environment.CreateWebResourceResponse(None, 204, 'No Content', 'Cache-Control: no-store')
@@ -277,11 +323,13 @@ def serve_files(window, app):
 
     def ready(control, args):
         if not args.IsSuccess:
+            app.log(f'WebView2 did not start: app {VERSION}, Windows build {sys.getwindowsversion().build}, {args.InitializationException}')
             return
         core = control.CoreWebView2
         app.log(f'started: app {VERSION}, Windows build {sys.getwindowsversion().build}, WebView2 {core.Environment.BrowserVersionString}')
         # The GPU or page process dying is what a black window can look like from the outside.
         core.ProcessFailed += lambda _, failed: app.log(f'WebView2 process failed: {failed.ProcessFailedKind}, {failed.Reason}, exit code {failed.ExitCode}')
+        core.NavigationCompleted += lambda _, done: done.IsSuccess or app.log(f'page did not load: {done.WebErrorStatus}, HTTP {done.HttpStatusCode}')
         core.AddWebResourceRequestedFilter(ORIGIN + '/*', CoreWebView2WebResourceContext.All)
         core.WebResourceRequested += respond
         core.NavigationStarting += stay
@@ -291,13 +339,22 @@ def serve_files(window, app):
 
 
 def log_startup_check(window, app):
-    """One line for a report of a black window. rendered=False: the page's code did not start. rendered=True: the
-    page is fine, so what the user sees is the graphics not showing it. No line at all: the page's thread is stuck."""
+    """One line for a report of a black window: how far the page's start got (web/index.html, bootStep), and for
+    how long it has been there. 'ready': the page is fine, so what the user sees is the graphics not showing it.
+    'no page script': index.html never ran. A failed check: the page's thread is stuck (or the window closed).
+
+    Asked of WebView2 itself, not through window.evaluate_js: that one runs on pywebview's script in the page,
+    the very thing that went missing on a PC with a black window."""
+    from System import Func, Object
     time.sleep(15)
     try:
-        app.log(f"startup check: rendered={bool(window.evaluate_js("document.getElementById('sidebar').childElementCount"))}")
-    except Exception:  # the window closed meanwhile
-        pass
+        form = window.native
+        task = form.Invoke(Func[Object](lambda: form.webview.CoreWebView2.ExecuteScriptAsync(
+            "window.bootText ? bootText() : 'no page script'")))
+        stage = json.loads(str(task.Result)) if task.Wait(10000) else 'no answer from the page within 10 s'
+        app.log(f'startup check: {stage}')
+    except Exception as exc:
+        app.log(f'startup check failed: {type(exc).__name__}: {exc}')
 
 
 def open_window(app):
@@ -315,7 +372,6 @@ def open_window(app):
     page_w, page_h = int(os.environ.get('NAI_PAGE_WIDTH') or PAGE_SIZE[0]), PAGE_SIZE[1]
     window = webview.create_window('NAI Style Lab', ORIGIN + '/', width=page_w + FRAME[0], height=page_h + FRAME[1],
                                    text_select=True, screen=webview.screens[0])
-    window.expose(app.call)  # the page's one way into Python: window.pywebview.api.call (web/js/api.js)
 
     def file_dialog(kind, **options):
         picked = window.create_file_dialog(kind, file_types=('zip 파일 (*.zip)',), **options)

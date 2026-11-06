@@ -1,8 +1,8 @@
 """The app window's link to :class:`engine.Engine`: no server, no network.
 
-The page calls :meth:`App.call` through pywebview's own channel, and its files (the page itself, the
-pictures) are handed to WebView2 straight from disk by main.py through :meth:`App.resource`. Nothing
-listens on a port, so no browser and no other program can reach the app.
+The page's calls (fetches to /api/...) and its files (the page itself, the pictures) are answered inside
+WebView2 by main.py: calls through :meth:`App.call`, files straight from disk through :meth:`App.resource`.
+Nothing listens on a port, so no browser and no other program can reach the app.
 """
 import json
 import mimetypes
@@ -91,7 +91,7 @@ class App:
         except NotFound:
             return json.dumps({'ok': False, 'error': f'알 수 없는 요청입니다: {path}'}, ensure_ascii=False)
         except Exception as exc:
-            self.log(f'{method} {path}\n{traceback.format_exc()}')
+            self.log(f'api {method} {path}: failed in Python\n{traceback.format_exc()}')
             return json.dumps({'ok': False, 'error': f'내부 오류가 났습니다: {exc}'}, ensure_ascii=False)
 
     def log_tail(self):

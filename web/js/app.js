@@ -260,17 +260,22 @@ window.addEventListener('unhandledrejection', (event) => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });  // catch up at once after the browser throttled a hidden window
 window.addEventListener('hashchange', mount);
 
+// Each step is recorded (bootStep, index.html), so a start that hangs is logged with where it stopped.
 (async function start() {
+  window.bootStep?.('app.js: GET /api/meta');
   try {
     app.meta = await get('/api/meta');
     setMeta(app.meta);
   } catch (error) {
     toast(error.message, 'error');
   }
+  window.bootStep?.('app.js: GET /api/status');
   await poll();
   if (!location.hash) location.replace('#/home');
+  window.bootStep?.(`app.js: showing ${location.hash}`);
   await mount();
   schedule();
+  window.bootStep?.('ready');
 })();
 
 export default app;
